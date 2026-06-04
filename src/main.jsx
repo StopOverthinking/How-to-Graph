@@ -1,11 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import QRCode from 'qrcode';
-import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string';
 import {
-  ArrowLeft,
+  compressToEncodedURIComponent,
+  compressToUint8Array,
+  decompressFromEncodedURIComponent,
+  decompressFromUint8Array
+} from 'lz-string';
+import {
   Brush,
-  Check,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   ClipboardList,
   Download,
@@ -16,7 +21,6 @@ import {
   PieChart,
   Plus,
   QrCode,
-  RotateCcw,
   Share2,
   Table2,
   Trash2,
@@ -47,6 +51,23 @@ const PLAN_TEMPLATES = [
   { id: 'draw', prefix: '', josa: 'eul', after: ' 그린다.' },
   { id: 'present', prefix: '', josa: 'eul', after: ' 발표한다.' }
 ];
+const SHARE_VERSION = 2;
+const SHARE_DEFAULT_TOKEN = '0';
+const SHARE_CHUNK_PREFIX = 'how-to-graph-share-parts:';
+const SHARE_CHUNK_SIZES = [1500, 1200, 950, 720, 540, 400, 300, 220, 160, 110, 72, 44, 24, 12, 6, 3, 1];
+const BASE32_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const QR_IMAGE_OPTIONS = {
+  margin: 1,
+  scale: 8,
+  errorCorrectionLevel: 'L',
+  color: {
+    dark: '#1f2d3d',
+    light: '#ffffff'
+  }
+};
+const GRAPH_MODE_CODES = { divide: 'd', paint: 'p', text: 't' };
+const GRAPH_MODES_BY_CODE = { d: 'divide', p: 'paint', t: 'text' };
+const chunkMemory = new Map();
 
 let idSeed = 1;
 function makeId(prefix) {
@@ -72,12 +93,11 @@ function createDefaultState() {
       roles: []
     },
     table: {
-      headerRow: makeDefaultHeaderRow(options.length + 2),
+      headerRow: makeEmptyRow(options.length + 2),
       rows: [
-        Array(options.length + 2).fill(''),
         Array(options.length + 2).fill('')
       ],
-      percentRow: null
+      tableDefaultsCleared: true
     },
     graph: {
       type: 'bar',
@@ -124,9 +144,9 @@ function normalizeLoadedState(raw) {
   const width = options.length + 2;
   const table = raw.table && typeof raw.table === 'object' ? raw.table : fallback.table;
   const existingRows = Array.isArray(table.rows) ? table.rows : fallback.table.rows;
-  const headerRow = fitHeaderRow(table.headerRow, width);
-  const rows = [0, 1].map((rowIndex) => fitRow(existingRows[rowIndex], width));
-  const percentRow = table.percentRow ? fitPercentRow(table.percentRow, width) : null;
+  const clearLegacyTableDefaults = table.tableDefaultsCleared !== true;
+  const headerRow = fitHeaderRow(table.headerRow, width, clearLegacyTableDefaults);
+  const rows = [fitRow(existingRows[0], width)];
 
   return {
     survey: {
@@ -138,7 +158,7 @@ function normalizeLoadedState(raw) {
       answers: raw.plan && Array.isArray(raw.plan.answers) ? PLAN_TEMPLATES.map((_, index) => raw.plan.answers[index] || '') : fallback.plan.answers,
       roles: raw.plan && Array.isArray(raw.plan.roles) ? raw.plan.roles : []
     },
-    table: { headerRow, rows, percentRow },
+    table: { headerRow, rows, tableDefaultsCleared: true },
     graph: {
       type: raw.graph && raw.graph.type === 'pie' ? 'pie' : 'bar',
       scale: raw.graph && raw.graph.scale ? raw.graph.scale : fallback.graph.scale,
@@ -151,25 +171,17 @@ function normalizeLoadedState(raw) {
   };
 }
 
-function makeDefaultHeaderRow(width) {
-  return Array.from({ length: width }, (_, index) => {
-    if (index === 0) return '제목';
-    if (index === width - 1) return '전체';
-    return `항목${index}`;
-  });
+function makeEmptyRow(width) {
+  return Array(width).fill('');
 }
 
-function makePercentRow(width) {
-  const row = Array(width).fill('');
-  row[0] = '백분율(%)';
-  return row;
-}
-
-function fitHeaderRow(row, width) {
-  const next = makeDefaultHeaderRow(width);
+function fitHeaderRow(row, width, clearLegacyDefaults = false) {
+  const next = makeEmptyRow(width);
   if (Array.isArray(row)) {
     for (let index = 0; index < width; index += 1) {
-      if (typeof row[index] === 'string') next[index] = row[index];
+      if (typeof row[index] === 'string') {
+        next[index] = clearLegacyDefaults && row[index] === getLegacyHeaderText(index, width) ? '' : row[index];
+      }
     }
   }
   return next;
@@ -183,8 +195,10 @@ function fitRow(row, width) {
   return next;
 }
 
-function fitPercentRow(row, width) {
-  return Array.isArray(row) ? fitRow(row, width) : makePercentRow(width);
+function getLegacyHeaderText(index, width) {
+  if (index === 0) return '제목';
+  if (index === width - 1) return '전체';
+  return `항목${index}`;
 }
 
 function sanitizeDividers(dividers) {
@@ -442,6 +456,7 @@ function App() {
               survey={state.survey}
               table={state.table}
               onTableChange={(patch) => patchState('table', patch)}
+              onNext={() => setActiveTab('graph')}
             />
           )}
           {activeTab === 'graph' && (
@@ -791,17 +806,15 @@ function PlanWorkspace({ plan, screen, onChange }) {
   );
 }
 
-function TableWorkspace({ survey, table, onTableChange }) {
+function TableWorkspace({ survey, table, onTableChange, onNext }) {
   const width = survey.options.length + 2;
   const fittedHeader = useMemo(() => fitHeaderRow(table.headerRow, width), [table.headerRow, width]);
-  const fittedRows = useMemo(() => [fitRow(table.rows[0], width), fitRow(table.rows[1], width)], [table.rows, width]);
-  const fittedPercent = table.percentRow ? fitPercentRow(table.percentRow, width) : null;
-  const readyForPercent = fittedRows.every((row) => row.every((cell) => cell.trim()));
-  const percentComplete = fittedPercent ? fittedPercent.every((cell) => cell.trim()) : false;
+  const fittedRows = useMemo(() => [fitRow(table.rows[0], width)], [table.rows, width]);
+  const readyForNext = fittedRows[0].every((cell, cellIndex) => cellIndex === 0 || cell.trim());
 
   useEffect(() => {
-    if (!Array.isArray(table.headerRow) || table.headerRow.length !== width || table.rows[0].length !== width || table.rows[1].length !== width || (table.percentRow && table.percentRow.length !== width)) {
-      onTableChange({ headerRow: fittedHeader, rows: fittedRows, percentRow: fittedPercent });
+    if (!Array.isArray(table.headerRow) || table.headerRow.length !== width || !Array.isArray(table.rows) || table.rows.length !== 1 || !Array.isArray(table.rows[0]) || table.rows[0].length !== width) {
+      onTableChange({ headerRow: fittedHeader, rows: fittedRows });
     }
   }, [width]);
 
@@ -815,23 +828,10 @@ function TableWorkspace({ survey, table, onTableChange }) {
 
   function updateCell(rowIndex, cellIndex, value) {
     onTableChange((currentTable) => {
-      const rows = [fitRow(currentTable.rows[0], width), fitRow(currentTable.rows[1], width)];
+      const rows = [fitRow(currentTable.rows[0], width)];
       rows[rowIndex][cellIndex] = value;
       return { ...currentTable, rows };
     });
-  }
-
-  function updatePercentCell(cellIndex, value) {
-    onTableChange((currentTable) => {
-      const percentRow = currentTable.percentRow ? fitPercentRow(currentTable.percentRow, width) : makePercentRow(width);
-      percentRow[cellIndex] = value;
-      return { ...currentTable, percentRow };
-    });
-  }
-
-  function addPercentRow() {
-    if (!readyForPercent || fittedPercent) return;
-    onTableChange((currentTable) => ({ ...currentTable, percentRow: makePercentRow(width) }));
   }
 
   return (
@@ -841,14 +841,6 @@ function TableWorkspace({ survey, table, onTableChange }) {
       </div>
 
       <section className="panel-block table-panel">
-        <div className="section-heading with-action">
-          <SectionTitle icon={Table2} title="표 그리기" />
-          <button className="icon-text-button" type="button" onClick={addPercentRow} disabled={!readyForPercent || Boolean(fittedPercent)}>
-            <ArrowLeft size={18} aria-hidden="true" />
-            <span>다음</span>
-          </button>
-        </div>
-
         <div className="manual-table-wrap">
           <table className="manual-table">
             <thead>
@@ -878,35 +870,14 @@ function TableWorkspace({ survey, table, onTableChange }) {
                   ))}
                 </tr>
               ))}
-              {fittedPercent && (
-                <tr className="percent-row">
-                  {fittedPercent.map((cell, cellIndex) => (
-                    <td key={cellIndex}>
-                      <input
-                        value={cell}
-                        onChange={(event) => updatePercentCell(cellIndex, event.target.value)}
-                        aria-label={`백분율 행 ${cellIndex + 1}열`}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
 
-        <div className={`completion-strip ${percentComplete ? 'is-complete' : ''}`}>
-          {fittedPercent ? (
-            <>
-              <Check size={18} aria-hidden="true" />
-              <span>{percentComplete ? '백분율 행까지 모두 채웠습니다.' : '백분율 행을 직접 채워 주세요.'}</span>
-            </>
-          ) : (
-            <>
-              <MousePointer2 size={18} aria-hidden="true" />
-              <span>{readyForPercent ? '다음 버튼을 눌러 백분율 행을 추가할 수 있습니다.' : '모든 칸을 채우면 다음 버튼이 켜집니다.'}</span>
-            </>
-          )}
+        <div className="table-next-row">
+          <button className="table-next-button" type="button" onClick={onNext} disabled={!readyForNext}>
+            다음
+          </button>
         </div>
       </section>
     </div>
@@ -1169,46 +1140,51 @@ function PieGraph({ graph, segments }) {
 
 function ShareDialog({ state, onClose, onImport }) {
   const [qrSrc, setQrSrc] = useState('');
+  const [activeQrIndex, setActiveQrIndex] = useState(0);
   const [importText, setImportText] = useState('');
   const [message, setMessage] = useState('');
   const sharePayload = useMemo(() => makeSharePayload(state), [state]);
+  const activeQrItem = sharePayload.items[Math.min(activeQrIndex, sharePayload.items.length - 1)] || sharePayload.items[0];
+
+  useEffect(() => {
+    setActiveQrIndex(0);
+    setMessage('');
+  }, [sharePayload.cacheKey]);
 
   useEffect(() => {
     let live = true;
-    QRCode.toDataURL(sharePayload.url, {
-      margin: 2,
-      scale: 7,
-      errorCorrectionLevel: 'M',
-      color: {
-        dark: '#1f2d3d',
-        light: '#ffffff'
-      }
-    }).then((url) => {
+    setQrSrc('');
+    makeQrImage(activeQrItem.url).then((url) => {
       if (live) setQrSrc(url);
     }).catch(() => {
-      if (live) setMessage('QR 이미지를 만들지 못했습니다. 아래 코드를 복사해 주세요.');
+      if (live) setMessage('QR 이미지를 만들지 못했습니다.');
     });
     return () => {
       live = false;
     };
-  }, [sharePayload.url]);
+  }, [activeQrItem.url]);
 
   function copyPayload() {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(sharePayload.url).then(() => setMessage('복사했습니다.'));
+      navigator.clipboard.writeText(sharePayload.copyText)
+        .then(() => setMessage('복사했습니다.'))
+        .catch(() => {
+          setImportText(sharePayload.copyText);
+          setMessage('아래 주소를 길게 눌러 복사해 주세요.');
+        });
     } else {
-      setImportText(sharePayload.url);
+      setImportText(sharePayload.copyText);
       setMessage('아래 주소를 길게 눌러 복사해 주세요.');
     }
   }
 
   function applyImport() {
-    const loaded = parseImportText(importText);
-    if (!loaded) {
-      setMessage('가져올 수 없는 QR 내용입니다.');
+    const result = parseImportTextResult(importText);
+    if (!result.state) {
+      setMessage(result.message || '가져올 수 없는 QR 내용입니다.');
       return;
     }
-    onImport(loaded);
+    onImport(result.state);
     onClose();
   }
 
@@ -1225,6 +1201,31 @@ function ShareDialog({ state, onClose, onImport }) {
         <div className="share-grid">
           <div className="qr-card">
             {qrSrc ? <img src={qrSrc} alt="현재 자료 QR 코드" /> : <div className="qr-placeholder" />}
+            {sharePayload.items.length > 1 && (
+              <div className="qr-pager" aria-label="QR 순서">
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => setActiveQrIndex((index) => Math.max(0, index - 1))}
+                  disabled={activeQrIndex === 0}
+                  title="이전"
+                  aria-label="이전 QR"
+                >
+                  <ChevronLeft size={17} aria-hidden="true" />
+                </button>
+                <span>{activeQrIndex + 1}/{sharePayload.items.length}</span>
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => setActiveQrIndex((index) => Math.min(sharePayload.items.length - 1, index + 1))}
+                  disabled={activeQrIndex >= sharePayload.items.length - 1}
+                  title="다음"
+                  aria-label="다음 QR"
+                >
+                  <ChevronRight size={17} aria-hidden="true" />
+                </button>
+              </div>
+            )}
             <button className="icon-text-button" type="button" onClick={copyPayload}>
               <Share2 size={18} aria-hidden="true" />
               <span>주소 복사</span>
@@ -1308,36 +1309,652 @@ function sectorPath(cx, cy, radius, start, end) {
   return `M ${cx} ${cy} L ${startPoint.x} ${startPoint.y} A ${radius} ${radius} 0 ${largeArc} 1 ${endPoint.x} ${endPoint.y} Z`;
 }
 
+async function makeQrImage(text) {
+  try {
+    return await QRCode.toDataURL(text, QR_IMAGE_OPTIONS);
+  } catch (error) {
+    const svg = await QRCode.toString(text, { ...QR_IMAGE_OPTIONS, type: 'svg' });
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
+}
+
 function makeSharePayload(state) {
-  const data = compressToEncodedURIComponent(JSON.stringify({ version: 1, state }));
-  const base = window.location.href.split('#')[0];
+  const base = getShareBaseUrl();
+  const packed = packShareState(state);
+  const candidates = makeShareCandidates(base, packed);
+  const single = chooseBestQrCandidate(candidates);
+  if (single) {
+    return {
+      cacheKey: single.url,
+      copyText: single.url,
+      items: [{ url: single.url }],
+      mode: 'single'
+    };
+  }
+  return chooseBestChunkPayload(base, candidates);
+}
+
+function getShareBaseUrl() {
+  if (typeof window === 'undefined') return '';
+  const origin = window.location.origin;
+  if (origin && origin !== 'null') return `${origin}${window.location.pathname}`;
+  return window.location.href.split('#')[0].split('?')[0];
+}
+
+function makeShareCandidates(base, packed) {
+  if (isDefaultShareState(packed)) {
+    return [makeShareCandidate(base, 'g', SHARE_DEFAULT_TOKEN)];
+  }
+
+  const json = JSON.stringify(packed);
+  return [
+    makeShareCandidate(base, 'g', compressToEncodedURIComponent(json)),
+    makeShareCandidate(base, 'u', encodeBase32(compressToUint8Array(json)))
+  ];
+}
+
+function makeShareCandidate(base, kind, token) {
   return {
-    code: data,
-    url: `${base}#how-to-graph=${data}`
+    kind,
+    token,
+    url: `${base}#${kind}=${token}`
   };
 }
 
+function chooseBestQrCandidate(candidates) {
+  return candidates
+    .map((candidate) => ({ ...candidate, score: scoreQrText(candidate.url) }))
+    .filter((candidate) => candidate.score.ok)
+    .sort(compareQrCandidates)[0] || null;
+}
+
+function chooseBestChunkPayload(base, candidates) {
+  const plans = candidates
+    .map((candidate) => makeChunkPayload(base, candidate))
+    .filter(Boolean)
+    .sort((first, second) => (
+      first.items.length - second.items.length
+      || first.maxVersion - second.maxVersion
+      || first.totalLength - second.totalLength
+    ));
+
+  if (plans[0]) return plans[0];
+  const codeOnlyPlans = candidates
+    .map((candidate) => makeChunkPayload('', candidate))
+    .filter(Boolean)
+    .sort((first, second) => (
+      first.items.length - second.items.length
+      || first.maxVersion - second.maxVersion
+      || first.totalLength - second.totalLength
+    ));
+  if (codeOnlyPlans[0]) return codeOnlyPlans[0];
+
+  const fallback = makeShareCandidate(base, 'g', SHARE_DEFAULT_TOKEN);
+  return {
+    cacheKey: fallback.url,
+    copyText: fallback.url,
+    items: [{ url: fallback.url }],
+    mode: 'single'
+  };
+}
+
+function makeChunkPayload(base, candidate) {
+  const batchId = makeShareBatchId(`${candidate.kind}:${candidate.token}`);
+  for (const size of SHARE_CHUNK_SIZES) {
+    const parts = splitText(candidate.token, size);
+    const prefix = base ? `${base}#p=` : 'p=';
+    const items = parts.map((part, index) => ({
+      url: `${prefix}${candidate.kind.toUpperCase()}.${batchId}.${index.toString(36).toUpperCase()}.${parts.length.toString(36).toUpperCase()}.${part}`
+    }));
+    const scores = items.map((item) => scoreQrText(item.url));
+    if (!scores.every((score) => score.ok)) continue;
+    return {
+      cacheKey: `${candidate.kind}:${batchId}:${candidate.token.length}:${size}`,
+      copyText: candidate.url,
+      items,
+      mode: 'chunked',
+      maxVersion: Math.max(...scores.map((score) => score.version)),
+      totalLength: items.reduce((sum, item) => sum + item.url.length, 0)
+    };
+  }
+  return null;
+}
+
+function scoreQrText(text) {
+  try {
+    const qr = QRCode.create(text, { errorCorrectionLevel: QR_IMAGE_OPTIONS.errorCorrectionLevel });
+    return {
+      ok: true,
+      version: qr.version || 0,
+      length: text.length
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      version: Infinity,
+      length: text.length
+    };
+  }
+}
+
+function compareQrCandidates(first, second) {
+  return first.score.version - second.score.version
+    || first.score.length - second.score.length
+    || first.kind.localeCompare(second.kind);
+}
+
+function splitText(text, size) {
+  const parts = [];
+  for (let index = 0; index < text.length; index += size) {
+    parts.push(text.slice(index, index + size));
+  }
+  return parts.length ? parts : [''];
+}
+
+function makeShareBatchId(text) {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).toUpperCase();
+}
+
+function packShareState(state) {
+  const packed = { v: SHARE_VERSION };
+  const survey = state && state.survey ? state.survey : {};
+  const plan = state && state.plan ? state.plan : {};
+  const table = state && state.table ? state.table : {};
+  const graph = state && state.graph ? state.graph : {};
+  const surveyPayload = {};
+  const question = typeof survey.question === 'string' ? survey.question : '';
+  const optionsPayload = packOptionsForShare(survey.options);
+  const stickerPayload = encodeStickersForShare(survey.stickers, survey.options);
+
+  if (question) surveyPayload.q = question;
+  if (optionsPayload) surveyPayload.o = optionsPayload;
+  if (stickerPayload) surveyPayload.k = stickerPayload;
+  if (hasObjectKeys(surveyPayload)) packed.s = surveyPayload;
+
+  const planPayload = {};
+  const answerPayload = packIndexedStrings(plan.answers, PLAN_TEMPLATES.length);
+  const rolePayload = packIndexedStrings(plan.roles, PLAN_TEMPLATES.length);
+  if (answerPayload) planPayload.a = answerPayload;
+  if (rolePayload) planPayload.r = rolePayload;
+  if (hasObjectKeys(planPayload)) packed.p = planPayload;
+
+  const width = getShareOptionCount(survey.options) + 2;
+  const tablePayload = {};
+  const headerPayload = packRowForShare(table.headerRow, width);
+  const rowPayload = packRowForShare(Array.isArray(table.rows) ? table.rows[0] : null, width);
+  if (headerPayload) tablePayload.h = headerPayload;
+  if (rowPayload) tablePayload.r = rowPayload;
+  if (hasObjectKeys(tablePayload)) packed.t = tablePayload;
+
+  const graphPayload = packGraphForShare(graph);
+  if (graphPayload) packed.g = graphPayload;
+
+  return packed;
+}
+
+function isDefaultShareState(packed) {
+  return packed && Object.keys(packed).length === 1 && packed.v === SHARE_VERSION;
+}
+
+function packOptionsForShare(options) {
+  const count = getShareOptionCount(options);
+  let changed = count !== 3;
+  const entries = Array.from({ length: count }, (_, index) => {
+    const option = Array.isArray(options) ? options[index] : null;
+    const label = option && typeof option.label === 'string' ? option.label : '';
+    const defaultColor = ITEM_COLORS[index % ITEM_COLORS.length];
+    const color = option && option.color ? option.color : defaultColor;
+    if (label || color !== defaultColor) changed = true;
+    return color === defaultColor ? (label || null) : [label, encodeColorForShare(color, ITEM_COLORS)];
+  });
+  return changed ? entries : null;
+}
+
+function getShareOptionCount(options) {
+  return Array.isArray(options) && options.length ? clamp(options.length, 2, 8) : 3;
+}
+
+function encodeStickersForShare(stickers, options) {
+  if (!Array.isArray(stickers) || !stickers.length || !Array.isArray(options)) return '';
+  const optionIndexById = new Map(options.map((option, index) => [option.id, index]));
+  return stickers
+    .map((sticker) => {
+      const optionIndex = optionIndexById.get(sticker.optionId);
+      if (!Number.isInteger(optionIndex)) return '';
+      return `${optionIndex.toString(36)}${toBase36(quantizePercent(sticker.x), 2)}${toBase36(quantizePercent(sticker.y), 2)}`;
+    })
+    .join('');
+}
+
+function packIndexedStrings(values, length) {
+  if (!Array.isArray(values)) return null;
+  const packed = {};
+  for (let index = 0; index < length; index += 1) {
+    if (typeof values[index] === 'string' && values[index]) packed[index.toString(36)] = values[index];
+  }
+  return hasObjectKeys(packed) ? packed : null;
+}
+
+function packRowForShare(row, width) {
+  const fitted = fitRow(row, width);
+  while (fitted.length && !fitted[fitted.length - 1]) fitted.pop();
+  return fitted.length ? fitted : null;
+}
+
+function packGraphForShare(graph) {
+  const packed = {};
+  const type = graph.type === 'pie' ? 'pie' : 'bar';
+  const scale = Number(graph.scale) || 10;
+  const dividers = sanitizeDividers(Array.isArray(graph.dividers) ? graph.dividers : []);
+  const fillPayload = packFillsForShare(graph.fills, dividers);
+  const labelPayload = packLabelsForShare(graph.labels);
+  const mode = GRAPH_MODE_CODES[graph.mode] || GRAPH_MODE_CODES.divide;
+  const activeColor = graph.activeColor || GRAPH_COLORS[0];
+
+  if (type === 'pie') packed.t = 'p';
+  if (scale !== 10) packed.s = scale;
+  if (dividers.length) packed.d = encodeDividersForShare(dividers);
+  if (fillPayload) packed.f = fillPayload;
+  if (labelPayload) packed.l = labelPayload;
+  if (mode !== GRAPH_MODE_CODES.divide) packed.m = mode;
+  if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLORS);
+
+  return hasObjectKeys(packed) ? packed : null;
+}
+
+function packFillsForShare(fills, dividers) {
+  if (!fills || typeof fills !== 'object') return null;
+  const segments = getSegments(dividers);
+  const entries = [];
+  const codes = Array(segments.length).fill('.');
+  let canUseString = true;
+
+  segments.forEach((segment, index) => {
+    const color = fills[segment.key];
+    if (!color) return;
+    const code = encodeColorForShare(color, GRAPH_COLORS);
+    entries.push([index, code]);
+    if (typeof code === 'string' && code.length === 1) {
+      codes[index] = code;
+    } else {
+      canUseString = false;
+    }
+  });
+
+  if (!entries.length) return null;
+  if (!canUseString) return entries;
+  while (codes.length && codes[codes.length - 1] === '.') codes.pop();
+  return codes.join('');
+}
+
+function packLabelsForShare(labels) {
+  if (!Array.isArray(labels) || !labels.length) return null;
+  return labels.map((label) => [
+    label && typeof label.text === 'string' ? label.text : '',
+    quantizePercent(label && label.x),
+    quantizePercent(label && label.y)
+  ]);
+}
+
+function unpackShareState(packed) {
+  if (!packed || packed.v !== SHARE_VERSION) return null;
+  const surveyPayload = asPlainObject(packed.s);
+  const options = unpackOptionsForShare(surveyPayload.o);
+  const width = options.length + 2;
+  const tablePayload = asPlainObject(packed.t);
+  const planPayload = asPlainObject(packed.p);
+
+  return normalizeLoadedState({
+    survey: {
+      question: typeof surveyPayload.q === 'string' ? surveyPayload.q : '',
+      options,
+      stickers: decodeStickersForShare(surveyPayload.k, options)
+    },
+    plan: {
+      answers: unpackIndexedStrings(planPayload.a, PLAN_TEMPLATES.length),
+      roles: unpackIndexedStrings(planPayload.r, PLAN_TEMPLATES.length)
+    },
+    table: {
+      headerRow: unpackRowForShare(tablePayload.h, width),
+      rows: [unpackRowForShare(tablePayload.r, width)],
+      tableDefaultsCleared: true
+    },
+    graph: unpackGraphForShare(packed.g)
+  });
+}
+
+function unpackOptionsForShare(entries) {
+  const count = Array.isArray(entries) && entries.length ? clamp(entries.length, 2, 8) : 3;
+  return Array.from({ length: count }, (_, index) => {
+    const entry = Array.isArray(entries) ? entries[index] : null;
+    const defaultColor = ITEM_COLORS[index % ITEM_COLORS.length];
+    let label = '';
+    let color = defaultColor;
+
+    if (typeof entry === 'string') {
+      label = entry;
+    } else if (Array.isArray(entry)) {
+      label = typeof entry[0] === 'string' ? entry[0] : '';
+      color = decodeColorForShare(entry[1], ITEM_COLORS, defaultColor);
+    }
+
+    return {
+      id: makeId('option'),
+      label,
+      color
+    };
+  });
+}
+
+function decodeStickersForShare(token, options) {
+  if (typeof token !== 'string' || !token || !Array.isArray(options)) return [];
+  const stickers = [];
+  for (let index = 0; index + 4 < token.length; index += 5) {
+    const optionIndex = Number.parseInt(token[index], 36);
+    const x = Number.parseInt(token.slice(index + 1, index + 3), 36);
+    const y = Number.parseInt(token.slice(index + 3, index + 5), 36);
+    if (!options[optionIndex] || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    stickers.push({
+      id: makeId('sticker'),
+      optionId: options[optionIndex].id,
+      x: decodeQuantizedPercent(x),
+      y: decodeQuantizedPercent(y)
+    });
+  }
+  return stickers;
+}
+
+function unpackIndexedStrings(encoded, length) {
+  const values = Array(length).fill('');
+  if (Array.isArray(encoded)) {
+    for (let index = 0; index < length; index += 1) {
+      if (typeof encoded[index] === 'string') values[index] = encoded[index];
+    }
+    return values;
+  }
+  if (!encoded || typeof encoded !== 'object') return values;
+  Object.entries(encoded).forEach(([key, value]) => {
+    const index = Number.parseInt(key, 36);
+    if (index >= 0 && index < length && typeof value === 'string') values[index] = value;
+  });
+  return values;
+}
+
+function unpackRowForShare(encoded, width) {
+  const row = Array(width).fill('');
+  if (Array.isArray(encoded)) {
+    for (let index = 0; index < width; index += 1) {
+      if (typeof encoded[index] === 'string') row[index] = encoded[index];
+    }
+    return row;
+  }
+  if (!encoded || typeof encoded !== 'object') return row;
+  Object.entries(encoded).forEach(([key, value]) => {
+    const index = Number.parseInt(key, 36);
+    if (index >= 0 && index < width && typeof value === 'string') row[index] = value;
+  });
+  return row;
+}
+
+function unpackGraphForShare(encoded) {
+  const graph = asPlainObject(encoded);
+  const dividers = decodeDividersForShare(graph.d);
+  const scale = [5, 10, 20, 25].includes(Number(graph.s)) ? Number(graph.s) : 10;
+  return {
+    type: graph.t === 'p' ? 'pie' : 'bar',
+    scale,
+    mode: GRAPH_MODES_BY_CODE[graph.m] || 'divide',
+    activeColor: decodeColorForShare(graph.a, GRAPH_COLORS, GRAPH_COLORS[0]),
+    dividers,
+    fills: decodeFillsForShare(graph.f, dividers),
+    labels: decodeLabelsForShare(graph.l)
+  };
+}
+
+function encodeDividersForShare(dividers) {
+  return sanitizeDividers(dividers).map((divider) => toBase36(Math.round(divider), 2)).join('');
+}
+
+function decodeDividersForShare(encoded) {
+  if (Array.isArray(encoded)) return sanitizeDividers(encoded);
+  if (typeof encoded !== 'string' || !encoded) return [];
+  const dividers = [];
+  for (let index = 0; index + 1 < encoded.length; index += 2) {
+    const value = Number.parseInt(encoded.slice(index, index + 2), 36);
+    if (Number.isFinite(value)) dividers.push(value);
+  }
+  return sanitizeDividers(dividers);
+}
+
+function decodeFillsForShare(encoded, dividers) {
+  const segments = getSegments(dividers);
+  const fills = {};
+  if (typeof encoded === 'string') {
+    Array.from(encoded).forEach((code, index) => {
+      if (!segments[index] || code === '.') return;
+      fills[segments[index].key] = decodeColorForShare(code, GRAPH_COLORS, GRAPH_COLORS[0]);
+    });
+    return fills;
+  }
+  if (!Array.isArray(encoded)) return fills;
+  encoded.forEach((entry) => {
+    if (!Array.isArray(entry)) return;
+    const index = Number(entry[0]);
+    if (!segments[index]) return;
+    fills[segments[index].key] = decodeColorForShare(entry[1], GRAPH_COLORS, GRAPH_COLORS[0]);
+  });
+  return fills;
+}
+
+function decodeLabelsForShare(encoded) {
+  if (!Array.isArray(encoded)) return [];
+  return encoded
+    .filter((label) => Array.isArray(label))
+    .map((label) => ({
+      id: makeId('label'),
+      text: typeof label[0] === 'string' ? label[0] : '',
+      x: decodeQuantizedPercent(label[1]),
+      y: decodeQuantizedPercent(label[2])
+    }));
+}
+
+function encodeColorForShare(color, palette) {
+  const index = palette.indexOf(color);
+  return index >= 0 ? index.toString(36) : color;
+}
+
+function decodeColorForShare(value, palette, fallback) {
+  if (typeof value === 'number') return palette[value] || fallback;
+  if (typeof value !== 'string' || !value) return fallback;
+  const index = Number.parseInt(value, 36);
+  if (value.length <= 2 && Number.isFinite(index) && palette[index]) return palette[index];
+  return value;
+}
+
+function quantizePercent(value) {
+  const number = Number(value);
+  return Math.round(clamp(Number.isFinite(number) ? number : 50, 0, 100) * 10);
+}
+
+function decodeQuantizedPercent(value) {
+  const number = Number(value);
+  return clamp(Number.isFinite(number) ? number / 10 : 50, 0, 100);
+}
+
+function toBase36(value, width) {
+  return Math.max(0, value).toString(36).padStart(width, '0');
+}
+
+function encodeBase32(bytes) {
+  let output = '';
+  let value = 0;
+  let bits = 0;
+  bytes.forEach((byte) => {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  });
+  if (bits > 0) output += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  return output;
+}
+
+function decodeBase32(text) {
+  const clean = (text || '').toUpperCase();
+  const bytes = [];
+  let value = 0;
+  let bits = 0;
+
+  for (const character of clean) {
+    const index = BASE32_ALPHABET.indexOf(character);
+    if (index < 0) return null;
+    value = (value << 5) | index;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+
+  return new Uint8Array(bytes);
+}
+
+function hasObjectKeys(value) {
+  return value && Object.keys(value).length > 0;
+}
+
+function asPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
 function readStateFromHash() {
-  const hash = window.location.hash || '';
-  const marker = '#how-to-graph=';
-  if (hash.indexOf(marker) !== 0 && hash.indexOf('how-to-graph=') === -1) return null;
-  return parseImportText(hash);
+  return parseImportTextResult(window.location.hash || '').state;
 }
 
 function parseImportText(text) {
-  if (!text || !text.trim()) return null;
+  return parseImportTextResult(text).state;
+}
+
+function parseImportTextResult(text) {
+  if (!text || !text.trim()) return { state: null };
+  const payload = extractSharePayload(text);
+  if (!payload) return { state: null };
+  if (payload.kind === 'p') return parseShareChunk(payload.value);
+  const state = decodeShareToken(payload.kind, payload.value);
+  return { state };
+}
+
+function extractSharePayload(text) {
   const trimmed = text.trim();
-  const marker = 'how-to-graph=';
-  const token = trimmed.indexOf(marker) >= 0
-    ? trimmed.slice(trimmed.indexOf(marker) + marker.length)
-    : trimmed;
+  const sources = [];
   try {
-    const json = decompressFromEncodedURIComponent(token.replace(/^#/, ''));
+    const url = new URL(trimmed, window.location.href);
+    if (url.hash) sources.push(url.hash.replace(/^#/, ''));
+  } catch (error) {
+    // 붙여넣은 값이 URL이 아니면 아래 원문 검사로 처리한다.
+  }
+  sources.push(trimmed.replace(/^#/, ''));
+
+  for (const source of sources) {
+    const marker = ['g=', 'u=', 'p=', 'how-to-graph='].find((item) => source.indexOf(item) >= 0);
+    if (marker) {
+      return {
+        kind: marker === 'how-to-graph=' ? 'legacy' : marker[0],
+        value: source.slice(source.indexOf(marker) + marker.length)
+      };
+    }
+  }
+
+  return { kind: 'legacy', value: trimmed.replace(/^#/, '') };
+}
+
+function decodeShareToken(kind, token) {
+  const clean = (token || '').trim().replace(/^#/, '');
+  try {
+    if (kind === 'g') {
+      if (clean === SHARE_DEFAULT_TOKEN) return unpackShareState({ v: SHARE_VERSION });
+      return parseShareJson(decompressFromEncodedURIComponent(clean));
+    }
+    if (kind === 'u') {
+      const bytes = decodeBase32(clean);
+      return bytes ? parseShareJson(decompressFromUint8Array(bytes)) : null;
+    }
+    const json = decompressFromEncodedURIComponent(clean);
     if (!json) return null;
     const parsed = JSON.parse(json);
     return normalizeLoadedState(parsed.state || parsed);
   } catch (error) {
     return null;
+  }
+}
+
+function parseShareJson(json) {
+  if (!json) return null;
+  const parsed = JSON.parse(json);
+  if (parsed && parsed.v === SHARE_VERSION) return unpackShareState(parsed);
+  return normalizeLoadedState(parsed.state || parsed);
+}
+
+function parseShareChunk(value) {
+  const parts = value.split('.');
+  if (parts.length < 5) return { state: null, message: '가져올 수 없는 QR 내용입니다.' };
+  const [kindCode, batchId, indexCode, totalCode, ...chunkParts] = parts;
+  const kind = kindCode.toLowerCase();
+  const index = Number.parseInt(indexCode, 36);
+  const total = Number.parseInt(totalCode, 36);
+  const chunk = chunkParts.join('.');
+  if (!['g', 'u'].includes(kind) || !batchId || !Number.isInteger(index) || !Number.isInteger(total) || index < 0 || index >= total || total < 1) {
+    return { state: null, message: '가져올 수 없는 QR 내용입니다.' };
+  }
+
+  const key = `${SHARE_CHUNK_PREFIX}${kind}:${batchId}:${total}`;
+  const chunks = readShareChunks(key, total);
+  chunks[index] = chunk;
+  writeShareChunks(key, chunks);
+
+  const received = chunks.filter((part) => part).length;
+  if (received < total) {
+    return { state: null, message: `QR ${received}/${total} 받았습니다.` };
+  }
+
+  const state = decodeShareToken(kind, chunks.join(''));
+  clearShareChunks(key);
+  return state ? { state } : { state: null, message: '가져올 수 없는 QR 내용입니다.' };
+}
+
+function readShareChunks(key, total) {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(key));
+    if (Array.isArray(saved) && saved.length === total) return saved;
+  } catch (error) {
+    // 저장소 접근이 막힌 환경에서는 현재 탭 메모리로만 이어 붙인다.
+  }
+  const cached = chunkMemory.get(key);
+  return Array.isArray(cached) && cached.length === total ? cached : Array(total).fill('');
+}
+
+function writeShareChunks(key, chunks) {
+  chunkMemory.set(key, chunks);
+  try {
+    window.localStorage.setItem(key, JSON.stringify(chunks));
+  } catch (error) {
+    // QR 조각은 메모리에도 남겨 현재 탭에서는 계속 받을 수 있게 한다.
+  }
+}
+
+function clearShareChunks(key) {
+  chunkMemory.delete(key);
+  try {
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    // 저장소 접근 실패는 가져오기 완료를 막지 않는다.
   }
 }
 
