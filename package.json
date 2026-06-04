@@ -1,0 +1,30 @@
+{
+  "name": "how-to-graph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-legacy": "^7.2.1",
+    "@vitejs/plugin-react": "^5.1.1",
+    "lucide-react": "^1.17.0",
+    "lz-string": "^1.5.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "vite": "^7.2.6"
+  },
+  "devDependencies": {
+    "terser": "^5.44.1"
+  },
+  "browserslist": [
+    "Safari >= 12",
+    "iOS >= 12",
+    "last 2 Chrome versions",
+    "last 2 Edge versions"
+  ]
+}
