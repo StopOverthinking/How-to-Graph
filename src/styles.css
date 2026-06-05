@@ -731,6 +731,11 @@ textarea.text-input:focus {
   text-align: center;
 }
 
+.manual-table th,
+.manual-table .title-column-cell {
+  background: #e6e6e6;
+}
+
 .manual-table th {
   font-size: 13px;
   color: var(--ink);
@@ -751,39 +756,22 @@ textarea.text-input:focus {
   font-weight: 700;
 }
 
+.manual-table th input,
+.manual-table .title-column-cell input {
+  background: #e6e6e6;
+  color: #000000;
+}
+
 .manual-table input:focus {
   border-color: transparent;
   box-shadow: inset 0 0 0 2px #000000;
   background: #ffffff;
+  color: #000000;
 }
 
-.table-next-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
-}
-
-.table-next-button {
-  min-width: 76px;
-  min-height: 34px;
-  border: 1px solid var(--teal-dark);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 12px;
-  background: var(--teal);
-  color: #ffffff;
-  cursor: pointer;
-  font-weight: 800;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
-}
-
-.table-next-button:disabled {
-  border-color: #c9ced6;
-  background: #e1e4e8;
-  color: #7b8490;
-  cursor: default;
+.manual-table th input:focus,
+.manual-table .title-column-cell input:focus {
+  background: #e6e6e6;
 }
 
 .graph-layout {
@@ -821,6 +809,114 @@ textarea.text-input:focus {
   min-width: 0;
 }
 
+.graph-manual-panel {
+  margin: 10px 0 10px;
+}
+
+.graph-count-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-gap: 6px;
+  margin-bottom: 8px;
+}
+
+.graph-count-row span {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfcfa;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.divider-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-gap: 6px;
+  margin-bottom: 10px;
+}
+
+.divider-chip-grid button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.divider-chip-grid button.is-active {
+  border-color: var(--teal);
+  background: #eaf7f5;
+  color: var(--teal-dark);
+  box-shadow: inset 0 0 0 1px rgba(43, 179, 163, 0.22);
+}
+
+.graph-segment-list {
+  display: grid;
+  grid-gap: 6px;
+}
+
+.graph-segment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-gap: 6px;
+}
+
+.graph-segment-fill,
+.segment-clear-button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.graph-segment-fill {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.segment-color-dot {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin-right: 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.segment-clear-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.segment-clear-button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.graph-action-row {
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
+  grid-gap: 8px;
+  justify-content: end;
+  margin: 8px 0 10px;
+}
+
 .graph-canvas {
   position: relative;
   min-height: 520px;
@@ -851,6 +947,31 @@ textarea.text-input:focus {
   border-color: #a891ff;
 }
 
+.graph-canvas.mode-divide,
+.graph-canvas.mode-paint {
+  cursor: crosshair;
+}
+
+.graph-readout {
+  position: absolute;
+  z-index: 2;
+  min-width: 44px;
+  min-height: 26px;
+  transform: translate(-50%, -100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border: 1px solid rgba(31, 45, 61, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(31, 45, 61, 0.12);
+}
+
 .bar-svg,
 .pie-svg {
   position: absolute;
@@ -869,6 +990,20 @@ textarea.text-input:focus {
   top: 5%;
   width: 64%;
   height: 88%;
+}
+
+.graph-preview-line {
+  stroke: var(--teal-dark);
+  stroke-width: 1.45;
+  stroke-dasharray: 1.8 1.3;
+  pointer-events: none;
+}
+
+.graph-preview-segment {
+  stroke: var(--teal-dark);
+  stroke-width: 1.25;
+  stroke-dasharray: 1.8 1.3;
+  pointer-events: none;
 }
 
 .graph-floating-label {

@@ -41,6 +41,8 @@ const GRAPH_COLORS = ['#5ac8a8', '#ffb84d', '#ff6b6b', '#4d96ff', '#9b6bff', '#7
 const LEGACY_DEFAULT_QUESTION = '우리 반 친구들이 가장 좋아하는 것은?';
 const LEGACY_DEFAULT_OPTIONS = ['좋아하는 간식', '좋아하는 놀이', '가고 싶은 장소'];
 const CHOICES = ['눈금', '표', '제목', '단위', '크기', '항목', '그래프', '합계', '색깔', '백분율', '범례', '순서'];
+const COUNT_ROW_LABEL = '인원(명)';
+const PERCENTAGE_ROW_LABEL = '백분율(%)';
 const STICKER_SIZE_PX = 23;
 const MAX_STICKER_OVERLAP_RATIO = 0.1;
 const STICKER_PLACEMENT_STEP_PX = 1;
@@ -67,6 +69,8 @@ const QR_IMAGE_OPTIONS = {
 };
 const GRAPH_MODE_CODES = { divide: 'd', paint: 'p', text: 't' };
 const GRAPH_MODES_BY_CODE = { d: 'divide', p: 'paint', t: 'text' };
+const BAR_GRAPH_BOX = { left: 6, top: 18, width: 88, height: 24 };
+const PIE_GRAPH_CIRCLE = { cx: 50, cy: 50, radius: 38 };
 const chunkMemory = new Map();
 
 let idSeed = 1;
@@ -95,7 +99,8 @@ function createDefaultState() {
     table: {
       headerRow: makeEmptyRow(options.length + 2),
       rows: [
-        Array(options.length + 2).fill('')
+        makeEmptyRow(options.length + 2),
+        makeEmptyRow(options.length + 2)
       ],
       tableDefaultsCleared: true
     },
@@ -146,7 +151,10 @@ function normalizeLoadedState(raw) {
   const existingRows = Array.isArray(table.rows) ? table.rows : fallback.table.rows;
   const clearLegacyTableDefaults = table.tableDefaultsCleared !== true;
   const headerRow = fitHeaderRow(table.headerRow, width, clearLegacyTableDefaults);
-  const rows = [fitRow(existingRows[0], width)];
+  const rows = fitRows(existingRows, width);
+  const planAnswers = raw.plan && Array.isArray(raw.plan.answers)
+    ? PLAN_TEMPLATES.map((_, index) => raw.plan.answers[index] || '')
+    : fallback.plan.answers;
 
   return {
     survey: {
@@ -155,8 +163,8 @@ function normalizeLoadedState(raw) {
       stickers
     },
     plan: {
-      answers: raw.plan && Array.isArray(raw.plan.answers) ? PLAN_TEMPLATES.map((_, index) => raw.plan.answers[index] || '') : fallback.plan.answers,
-      roles: raw.plan && Array.isArray(raw.plan.roles) ? raw.plan.roles : []
+      answers: planAnswers,
+      roles: normalizePlanRoles(raw.plan && raw.plan.roles, planAnswers)
     },
     table: { headerRow, rows, tableDefaultsCleared: true },
     graph: {
@@ -169,6 +177,29 @@ function normalizeLoadedState(raw) {
       labels: raw.graph && Array.isArray(raw.graph.labels) ? raw.graph.labels : []
     }
   };
+}
+
+function normalizePlanRoles(rawRoles, answers) {
+  if (!Array.isArray(rawRoles)) return [];
+  const hasRoleName = rawRoles.some((role) => {
+    if (typeof role === 'string') return Boolean(role);
+    return Boolean(role && typeof role.name === 'string' && role.name);
+  });
+  if (!hasRoleName) return [];
+
+  return PLAN_TEMPLATES.map((_, index) => {
+    const role = rawRoles[index];
+    const existingRole = role && typeof role === 'object' && !Array.isArray(role) ? role : {};
+    const name = typeof role === 'string'
+      ? role
+      : (typeof existingRole.name === 'string' ? existingRole.name : '');
+
+    return {
+      id: existingRole.id || makeId('role'),
+      sentence: buildSentence(Array.isArray(answers) ? answers[index] : '', index),
+      name
+    };
+  });
 }
 
 function makeEmptyRow(width) {
@@ -184,6 +215,7 @@ function fitHeaderRow(row, width, clearLegacyDefaults = false) {
       }
     }
   }
+  next[0] = '';
   return next;
 }
 
@@ -193,6 +225,17 @@ function fitRow(row, width) {
     for (let index = 0; index < width; index += 1) next[index] = row[index] || '';
   }
   return next;
+}
+
+function fitRows(rows, width) {
+  const sourceRows = Array.isArray(rows) ? rows.slice(0, 2) : [];
+  while (sourceRows.length < 2) sourceRows.push(makeEmptyRow(width));
+  return sourceRows.map((row, rowIndex) => {
+    const fitted = fitRow(row, width);
+    if (rowIndex === 0) fitted[0] = COUNT_ROW_LABEL;
+    if (rowIndex === 1) fitted[0] = PERCENTAGE_ROW_LABEL;
+    return fitted;
+  });
 }
 
 function getLegacyHeaderText(index, width) {
@@ -456,7 +499,6 @@ function App() {
               survey={state.survey}
               table={state.table}
               onTableChange={(patch) => patchState('table', patch)}
-              onNext={() => setActiveTab('graph')}
             />
           )}
           {activeTab === 'graph' && (
@@ -806,14 +848,13 @@ function PlanWorkspace({ plan, screen, onChange }) {
   );
 }
 
-function TableWorkspace({ survey, table, onTableChange, onNext }) {
+function TableWorkspace({ survey, table, onTableChange }) {
   const width = survey.options.length + 2;
   const fittedHeader = useMemo(() => fitHeaderRow(table.headerRow, width), [table.headerRow, width]);
-  const fittedRows = useMemo(() => [fitRow(table.rows[0], width)], [table.rows, width]);
-  const readyForNext = fittedRows[0].every((cell, cellIndex) => cellIndex === 0 || cell.trim());
+  const fittedRows = useMemo(() => fitRows(table.rows, width), [table.rows, width]);
 
   useEffect(() => {
-    if (!Array.isArray(table.headerRow) || table.headerRow.length !== width || !Array.isArray(table.rows) || table.rows.length !== 1 || !Array.isArray(table.rows[0]) || table.rows[0].length !== width) {
+    if (!Array.isArray(table.headerRow) || table.headerRow.length !== width || !Array.isArray(table.rows) || table.rows.length !== 2 || table.rows.some((row) => !Array.isArray(row) || row.length !== width)) {
       onTableChange({ headerRow: fittedHeader, rows: fittedRows });
     }
   }, [width]);
@@ -828,7 +869,7 @@ function TableWorkspace({ survey, table, onTableChange, onNext }) {
 
   function updateCell(rowIndex, cellIndex, value) {
     onTableChange((currentTable) => {
-      const rows = [fitRow(currentTable.rows[0], width)];
+      const rows = fitRows(currentTable.rows, width);
       rows[rowIndex][cellIndex] = value;
       return { ...currentTable, rows };
     });
@@ -850,6 +891,7 @@ function TableWorkspace({ survey, table, onTableChange, onNext }) {
                     <input
                       value={cell}
                       onChange={(event) => updateHeaderCell(cellIndex, event.target.value)}
+                      readOnly={cellIndex === 0}
                       aria-label={`머리행 ${cellIndex + 1}열`}
                     />
                   </th>
@@ -860,10 +902,11 @@ function TableWorkspace({ survey, table, onTableChange, onNext }) {
               {fittedRows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {row.map((cell, cellIndex) => (
-                    <td key={cellIndex}>
+                    <td key={cellIndex} className={cellIndex === 0 ? 'title-column-cell' : undefined}>
                       <input
                         value={cell}
                         onChange={(event) => updateCell(rowIndex, cellIndex, event.target.value)}
+                        readOnly={cellIndex === 0}
                         aria-label={`${rowIndex + 1}행 ${cellIndex + 1}열`}
                       />
                     </td>
@@ -874,11 +917,6 @@ function TableWorkspace({ survey, table, onTableChange, onNext }) {
           </table>
         </div>
 
-        <div className="table-next-row">
-          <button className="table-next-button" type="button" onClick={onNext} disabled={!readyForNext}>
-            다음
-          </button>
-        </div>
       </section>
     </div>
   );
@@ -887,15 +925,18 @@ function TableWorkspace({ survey, table, onTableChange, onNext }) {
 function GraphWorkspace({ graph, onChange }) {
   const canvasRef = useRef(null);
   const segments = getSegments(graph.dividers);
+  const dividerTicks = useMemo(() => makeDividerTicks(graph.scale), [graph.scale]);
+  const coloredSegmentCount = getColoredSegmentCount(segments, graph.fills);
 
   function setGraph(patch) {
     onChange({ ...graph, ...patch });
   }
 
   function handleGraphPoint(point) {
+    if ((graph.mode === 'divide' || graph.mode === 'paint') && !point.insideGraph) return;
+
     if (graph.mode === 'divide') {
-      const raw = graph.type === 'bar' ? point.graphX : point.percentAngle;
-      const snapped = clamp(Math.round(raw / graph.scale) * graph.scale, graph.scale, 100 - graph.scale);
+      const snapped = getSnappedDividerValue(graph, point);
       const hasDivider = graph.dividers.indexOf(snapped) !== -1;
       const dividers = hasDivider
         ? graph.dividers.filter((value) => value !== snapped)
@@ -905,9 +946,7 @@ function GraphWorkspace({ graph, onChange }) {
     }
 
     if (graph.mode === 'paint') {
-      const targetValue = graph.type === 'bar' ? point.graphX : point.percentAngle;
-      const segment = segments.find((item) => targetValue >= item.start && targetValue <= item.end) || segments[segments.length - 1];
-      setGraph({ fills: { ...graph.fills, [segment.key]: graph.activeColor } });
+      fillSegment(findSegmentFromPoint(graph, segments, point));
       return;
     }
 
@@ -918,6 +957,47 @@ function GraphWorkspace({ graph, onChange }) {
       y: point.canvasY
     });
     setGraph({ labels });
+  }
+
+  function toggleDivider(value) {
+    const hasDivider = graph.dividers.indexOf(value) !== -1;
+    const dividers = hasDivider
+      ? graph.dividers.filter((divider) => divider !== value)
+      : sanitizeDividers(graph.dividers.concat(value));
+    setGraph({ dividers });
+  }
+
+  function undoDivider() {
+    if (!graph.dividers.length) return;
+    setGraph({ dividers: graph.dividers.slice(0, -1) });
+  }
+
+  function fillSegment(segment) {
+    if (!segment) return;
+    setGraph({ fills: { ...graph.fills, [segment.key]: graph.activeColor } });
+  }
+
+  function clearSegment(segment) {
+    if (!segment || !graph.fills[segment.key]) return;
+    const fills = { ...graph.fills };
+    delete fills[segment.key];
+    setGraph({ fills });
+  }
+
+  function clearFills() {
+    if (!coloredSegmentCount) return;
+    setGraph({ fills: {} });
+  }
+
+  function addCenterLabel() {
+    setGraph({
+      labels: graph.labels.concat({
+        id: makeId('label'),
+        text: '글자',
+        x: 50,
+        y: graph.type === 'bar' ? 72 : 88
+      })
+    });
   }
 
   function updateLabel(labelId, patch) {
@@ -980,6 +1060,28 @@ function GraphWorkspace({ graph, onChange }) {
           ))}
         </div>
 
+        <GraphManualPanel
+          graph={graph}
+          segments={segments}
+          dividerTicks={dividerTicks}
+          coloredSegmentCount={coloredSegmentCount}
+          onToggleDivider={toggleDivider}
+          onFillSegment={fillSegment}
+          onClearSegment={clearSegment}
+        />
+
+        <div className="graph-action-row">
+          <button className="icon-button" type="button" onClick={undoDivider} disabled={!graph.dividers.length} title="마지막 선 지우기" aria-label="마지막 선 지우기">
+            <Undo2 size={17} aria-hidden="true" />
+          </button>
+          <button className="icon-button" type="button" onClick={clearFills} disabled={!coloredSegmentCount} title="색 모두 지우기" aria-label="색 모두 지우기">
+            <Eraser size={17} aria-hidden="true" />
+          </button>
+          <button className="icon-button" type="button" onClick={addCenterLabel} title="글자 추가" aria-label="글자 추가">
+            <Plus size={17} aria-hidden="true" />
+          </button>
+        </div>
+
         <button className="icon-text-button secondary" type="button" onClick={resetGraph}>
           <Eraser size={18} aria-hidden="true" />
           <span>그래프 지우기</span>
@@ -1017,32 +1119,119 @@ function GraphWorkspace({ graph, onChange }) {
   );
 }
 
+function GraphManualPanel({ graph, segments, dividerTicks, coloredSegmentCount, onToggleDivider, onFillSegment, onClearSegment }) {
+  return (
+    <div className="graph-manual-panel">
+      <div className="graph-count-row" aria-live="polite">
+        <span>선 {graph.dividers.length}</span>
+        <span>구간 {segments.length}</span>
+        <span>색 {coloredSegmentCount}</span>
+      </div>
+
+      <div className="divider-chip-grid" aria-label="눈금선 직접 나누기">
+        {dividerTicks.map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={graph.dividers.indexOf(value) !== -1 ? 'is-active' : ''}
+            onClick={() => onToggleDivider(value)}
+            aria-pressed={graph.dividers.indexOf(value) !== -1}
+          >
+            {value}
+          </button>
+        ))}
+      </div>
+
+      <div className="graph-segment-list" aria-label="구간 직접 색칠하기">
+        {segments.map((segment) => {
+          const color = graph.fills[segment.key];
+          return (
+            <div className="graph-segment-row" key={segment.key}>
+              <button className="graph-segment-fill" type="button" onClick={() => onFillSegment(segment)}>
+                <span className="segment-color-dot" style={{ backgroundColor: color || '#ffffff' }} />
+                <span>{formatSegmentRange(segment)}</span>
+              </button>
+              <button
+                className="segment-clear-button"
+                type="button"
+                onClick={() => onClearSegment(segment)}
+                disabled={!color}
+                title={`${formatSegmentRange(segment)} 색 지우기`}
+                aria-label={`${formatSegmentRange(segment)} 색 지우기`}
+              >
+                <Eraser size={14} aria-hidden="true" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onPoint, onLabelChange }, ref) {
   const touchGuard = useRef(0);
+  const [hoverPoint, setHoverPoint] = useState(null);
+  const previewDivider = hoverPoint && hoverPoint.insideGraph && graph.mode === 'divide'
+    ? getSnappedDividerValue(graph, hoverPoint)
+    : null;
+  const previewSegment = hoverPoint && hoverPoint.insideGraph && graph.mode === 'paint'
+    ? findSegmentFromPoint(graph, segments, hoverPoint)
+    : null;
+  const readoutText = hoverPoint && hoverPoint.insideGraph && graph.mode !== 'text'
+    ? getPointReadout(graph, segments, hoverPoint)
+    : '';
+  const readoutStyle = hoverPoint
+    ? {
+      left: `${clamp(hoverPoint.canvasX, 9, 91)}%`,
+      top: `${clamp(hoverPoint.canvasY - 8, 7, 93)}%`
+    }
+    : null;
 
   function pointFromEvent(clientX, clientY, target) {
     const rect = target.getBoundingClientRect();
     const canvasX = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
     const canvasY = clamp(((clientY - rect.top) / rect.height) * 100, 0, 100);
-    const graphLeft = graph.type === 'bar' ? 8 : 20;
-    const graphTop = graph.type === 'bar' ? 34 : 9;
-    const graphWidth = graph.type === 'bar' ? 84 : 60;
-    const graphHeight = graph.type === 'bar' ? 28 : 82;
-    const graphX = clamp(((canvasX - graphLeft) / graphWidth) * 100, 0, 100);
-    const percentAngle = pointToPiePercent(canvasX, canvasY);
-    return { canvasX, canvasY, graphX, percentAngle };
+    const graphElement = target.querySelector(graph.type === 'bar' ? '.bar-svg' : '.pie-svg');
+    const graphRect = graphElement ? graphElement.getBoundingClientRect() : rect;
+    const svgHeight = graph.type === 'bar' ? 60 : 100;
+    const rawSvgX = graphRect.width ? ((clientX - graphRect.left) / graphRect.width) * 100 : 0;
+    const rawSvgY = graphRect.height ? ((clientY - graphRect.top) / graphRect.height) * svgHeight : 0;
+    const svgX = clamp(rawSvgX, 0, 100);
+    const svgY = clamp(rawSvgY, 0, svgHeight);
+    const graphX = clamp(((svgX - BAR_GRAPH_BOX.left) / BAR_GRAPH_BOX.width) * 100, 0, 100);
+    const graphY = clamp(((svgY - BAR_GRAPH_BOX.top) / BAR_GRAPH_BOX.height) * 100, 0, 100);
+    const pieDistance = Math.hypot(rawSvgX - PIE_GRAPH_CIRCLE.cx, rawSvgY - PIE_GRAPH_CIRCLE.cy);
+    const insideGraph = graph.type === 'bar'
+      ? rawSvgX >= BAR_GRAPH_BOX.left
+        && rawSvgX <= BAR_GRAPH_BOX.left + BAR_GRAPH_BOX.width
+        && rawSvgY >= BAR_GRAPH_BOX.top
+        && rawSvgY <= BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height
+      : pieDistance <= PIE_GRAPH_CIRCLE.radius;
+    const percentAngle = pointToPiePercent(svgX, svgY);
+    return { canvasX, canvasY, svgX, svgY, graphX, graphY, percentAngle, insideGraph };
   }
 
   function handleTouchStart(event) {
     if (!event.touches || !event.touches.length) return;
     touchGuard.current = Date.now();
     event.preventDefault();
-    onPoint(pointFromEvent(event.touches[0].clientX, event.touches[0].clientY, event.currentTarget));
+    const point = pointFromEvent(event.touches[0].clientX, event.touches[0].clientY, event.currentTarget);
+    setHoverPoint(point.insideGraph ? point : null);
+    onPoint(point);
   }
 
   function handleMouseDown(event) {
     if (Date.now() - touchGuard.current < 650) return;
-    onPoint(pointFromEvent(event.clientX, event.clientY, event.currentTarget));
+    if (event.button !== 0) return;
+    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
+    setHoverPoint(point.insideGraph ? point : null);
+    onPoint(point);
+  }
+
+  function handleMouseMove(event) {
+    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
+    setHoverPoint(point.insideGraph ? point : null);
   }
 
   return (
@@ -1050,15 +1239,19 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
       className={`graph-canvas mode-${graph.mode}`}
       ref={ref}
       onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => setHoverPoint(null)}
       onTouchStart={handleTouchStart}
       role="button"
       aria-label="그래프 그리기 영역"
     >
       {graph.type === 'bar' ? (
-        <BarGraph graph={graph} segments={segments} />
+        <BarGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegment && previewSegment.key} />
       ) : (
-        <PieGraph graph={graph} segments={segments} />
+        <PieGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegment && previewSegment.key} />
       )}
+
+      {readoutText && <div className="graph-readout" style={readoutStyle}>{readoutText}</div>}
 
       {graph.labels.map((label) => (
         <input
@@ -1076,7 +1269,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   );
 });
 
-function BarGraph({ graph, segments }) {
+function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
   const ticks = [];
   for (let value = 0; value <= 100; value += graph.scale) ticks.push(value);
   return (
@@ -1093,12 +1286,28 @@ function BarGraph({ graph, segments }) {
           stroke="none"
         />
       ))}
+      {segments.map((segment) => (
+        segment.key === previewSegmentKey ? (
+          <rect
+            key={`preview-${segment.key}`}
+            className="graph-preview-segment"
+            x={6 + segment.start * 0.88}
+            y="18"
+            width={(segment.end - segment.start) * 0.88}
+            height="24"
+            fill="none"
+          />
+        ) : null
+      ))}
       {ticks.map((tick) => (
         <g key={tick}>
           <line x1={6 + tick * 0.88} x2={6 + tick * 0.88} y1="15" y2="45" stroke="#bdc7d3" strokeWidth="0.24" />
           <text x={6 + tick * 0.88} y="52" textAnchor="middle" fill="#52606f" fontSize="3.2">{tick}</text>
         </g>
       ))}
+      {Number.isFinite(previewDivider) && (
+        <line className="graph-preview-line" x1={6 + previewDivider * 0.88} x2={6 + previewDivider * 0.88} y1="14" y2="46" />
+      )}
       {graph.dividers.map((divider) => (
         <line key={divider} x1={6 + divider * 0.88} x2={6 + divider * 0.88} y1="16" y2="44" stroke="#1f2d3d" strokeWidth="1.05" />
       ))}
@@ -1106,7 +1315,7 @@ function BarGraph({ graph, segments }) {
   );
 }
 
-function PieGraph({ graph, segments }) {
+function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
   const ticks = [];
   for (let value = 0; value < 100; value += graph.scale) ticks.push(value);
   return (
@@ -1119,6 +1328,13 @@ function PieGraph({ graph, segments }) {
         }
         return <path key={segment.key} d={sectorPath(50, 50, 38, segment.start, segment.end)} fill={color} stroke="none" />;
       })}
+      {segments.map((segment) => {
+        if (segment.key !== previewSegmentKey) return null;
+        if (segment.start === 0 && segment.end === 100) {
+          return <circle key={`preview-${segment.key}`} className="graph-preview-segment" cx="50" cy="50" r="38" fill="none" />;
+        }
+        return <path key={`preview-${segment.key}`} className="graph-preview-segment" d={sectorPath(50, 50, 38, segment.start, segment.end)} fill="none" />;
+      })}
       <circle cx="50" cy="50" r="38" fill="none" stroke="#1f2d3d" strokeWidth="1.15" />
       {ticks.map((tick) => {
         const point = polarPoint(50, 50, 38, tick);
@@ -1130,6 +1346,9 @@ function PieGraph({ graph, segments }) {
           </g>
         );
       })}
+      {Number.isFinite(previewDivider) && (
+        <line className="graph-preview-line" x1="50" y1="50" x2={polarPoint(50, 50, 40, previewDivider).x} y2={polarPoint(50, 50, 40, previewDivider).y} />
+      )}
       {graph.dividers.map((divider) => {
         const point = polarPoint(50, 50, 38, divider);
         return <line key={divider} x1="50" y1="50" x2={point.x} y2={point.y} stroke="#1f2d3d" strokeWidth="1.15" />;
@@ -1283,6 +1502,46 @@ function SegmentedControl({ value, onChange, items }) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function makeDividerTicks(scale) {
+  const ticks = [];
+  for (let value = scale; value < 100; value += scale) ticks.push(value);
+  return ticks;
+}
+
+function getGraphPointValue(graph, point) {
+  return graph.type === 'bar' ? point.graphX : point.percentAngle;
+}
+
+function getSnappedDividerValue(graph, point) {
+  const raw = getGraphPointValue(graph, point);
+  return clamp(Math.round(raw / graph.scale) * graph.scale, graph.scale, 100 - graph.scale);
+}
+
+function findSegmentByValue(segments, value) {
+  if (!segments.length) return null;
+  return segments.find((segment, index) => (
+    value >= segment.start && (value < segment.end || index === segments.length - 1)
+  )) || segments[segments.length - 1];
+}
+
+function findSegmentFromPoint(graph, segments, point) {
+  return findSegmentByValue(segments, getGraphPointValue(graph, point));
+}
+
+function formatSegmentRange(segment) {
+  return `${segment.start}-${segment.end}%`;
+}
+
+function getColoredSegmentCount(segments, fills) {
+  return segments.reduce((count, segment) => count + (fills && fills[segment.key] ? 1 : 0), 0);
+}
+
+function getPointReadout(graph, segments, point) {
+  if (graph.mode === 'divide') return `${getSnappedDividerValue(graph, point)}%`;
+  const segment = findSegmentFromPoint(graph, segments, point);
+  return segment ? formatSegmentRange(segment) : '';
 }
 
 function pointToPiePercent(x, y) {
@@ -1478,17 +1737,23 @@ function packShareState(state) {
 
   const planPayload = {};
   const answerPayload = packIndexedStrings(plan.answers, PLAN_TEMPLATES.length);
-  const rolePayload = packIndexedStrings(plan.roles, PLAN_TEMPLATES.length);
+  const rolePayload = packRolesForShare(plan.roles);
   if (answerPayload) planPayload.a = answerPayload;
   if (rolePayload) planPayload.r = rolePayload;
   if (hasObjectKeys(planPayload)) packed.p = planPayload;
 
   const width = getShareOptionCount(survey.options) + 2;
   const tablePayload = {};
-  const headerPayload = packRowForShare(table.headerRow, width);
-  const rowPayload = packRowForShare(Array.isArray(table.rows) ? table.rows[0] : null, width);
+  const headerPayload = packRowForShare(fitHeaderRow(table.headerRow, width), width);
+  const rowPayload = packRowsForShare(table.rows, width);
   if (headerPayload) tablePayload.h = headerPayload;
-  if (rowPayload) tablePayload.r = rowPayload;
+  if (rowPayload) {
+    if (rowPayload.length === 1) {
+      tablePayload.r = rowPayload[0];
+    } else {
+      tablePayload.rs = rowPayload;
+    }
+  }
   if (hasObjectKeys(tablePayload)) packed.t = tablePayload;
 
   const graphPayload = packGraphForShare(graph);
@@ -1540,10 +1805,30 @@ function packIndexedStrings(values, length) {
   return hasObjectKeys(packed) ? packed : null;
 }
 
+function packRolesForShare(roles) {
+  if (!Array.isArray(roles)) return null;
+  const packed = {};
+  for (let index = 0; index < PLAN_TEMPLATES.length; index += 1) {
+    const role = roles[index];
+    const name = typeof role === 'string'
+      ? role
+      : (role && typeof role.name === 'string' ? role.name : '');
+    if (name) packed[index.toString(36)] = name;
+  }
+  return hasObjectKeys(packed) ? packed : null;
+}
+
 function packRowForShare(row, width) {
   const fitted = fitRow(row, width);
   while (fitted.length && !fitted[fitted.length - 1]) fitted.pop();
   return fitted.length ? fitted : null;
+}
+
+function packRowsForShare(rows, width) {
+  const packedRows = fitRows(rows, width)
+    .map((row) => packRowForShare(row, width))
+    .filter((row) => row);
+  return packedRows.length ? packedRows : null;
 }
 
 function packGraphForShare(graph) {
@@ -1609,6 +1894,8 @@ function unpackShareState(packed) {
   const tablePayload = asPlainObject(packed.t);
   const planPayload = asPlainObject(packed.p);
 
+  const answers = unpackIndexedStrings(planPayload.a, PLAN_TEMPLATES.length);
+
   return normalizeLoadedState({
     survey: {
       question: typeof surveyPayload.q === 'string' ? surveyPayload.q : '',
@@ -1616,16 +1903,44 @@ function unpackShareState(packed) {
       stickers: decodeStickersForShare(surveyPayload.k, options)
     },
     plan: {
-      answers: unpackIndexedStrings(planPayload.a, PLAN_TEMPLATES.length),
-      roles: unpackIndexedStrings(planPayload.r, PLAN_TEMPLATES.length)
+      answers,
+      roles: unpackRolesForShare(planPayload.r, answers)
     },
     table: {
       headerRow: unpackRowForShare(tablePayload.h, width),
-      rows: [unpackRowForShare(tablePayload.r, width)],
+      rows: unpackRowsForShare(tablePayload, width),
       tableDefaultsCleared: true
     },
     graph: unpackGraphForShare(packed.g)
   });
+}
+
+function unpackRolesForShare(encoded, answers) {
+  const roles = Array(PLAN_TEMPLATES.length).fill('');
+  if (Array.isArray(encoded)) {
+    for (let index = 0; index < PLAN_TEMPLATES.length; index += 1) {
+      const role = encoded[index];
+      if (typeof role === 'string') {
+        roles[index] = role;
+      } else if (role && typeof role.name === 'string') {
+        roles[index] = role.name;
+      }
+    }
+    return normalizePlanRoles(roles, answers);
+  }
+
+  if (encoded && typeof encoded === 'object') {
+    Object.entries(encoded).forEach(([key, value]) => {
+      const index = Number.parseInt(key, 36);
+      if (index < 0 || index >= PLAN_TEMPLATES.length) return;
+      if (typeof value === 'string') {
+        roles[index] = value;
+      } else if (value && typeof value.name === 'string') {
+        roles[index] = value.name;
+      }
+    });
+  }
+  return normalizePlanRoles(roles, answers);
 }
 
 function unpackOptionsForShare(entries) {
@@ -1699,6 +2014,16 @@ function unpackRowForShare(encoded, width) {
     if (index >= 0 && index < width && typeof value === 'string') row[index] = value;
   });
   return row;
+}
+
+function unpackRowsForShare(tablePayload, width) {
+  if (Array.isArray(tablePayload.rs)) {
+    const rows = tablePayload.rs
+      .map((row) => unpackRowForShare(row, width))
+      .filter((row) => row.some((cell) => cell));
+    return rows.length ? rows : [makeEmptyRow(width)];
+  }
+  return [unpackRowForShare(tablePayload.r, width)];
 }
 
 function unpackGraphForShare(encoded) {
