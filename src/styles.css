@@ -366,10 +366,12 @@ textarea.text-input:focus {
 .plan-morph-step {
   display: grid;
   grid-template-rows: 0fr 1fr;
+  position: relative;
+  isolation: isolate;
   padding: 0;
   overflow: hidden;
   will-change: grid-template-rows, transform;
-  transition: grid-template-rows 380ms var(--spring), border-color 220ms var(--spring), background-color 220ms var(--spring), box-shadow 260ms var(--spring), transform 320ms var(--spring);
+  transition: grid-template-rows 520ms var(--spring), border-color 220ms var(--spring), background-color 220ms var(--spring), box-shadow 260ms var(--spring), transform 520ms var(--spring);
 }
 
 .plan-morph-step.is-active {
@@ -388,6 +390,8 @@ textarea.text-input:focus {
 
 .plan-active-content {
   overflow: hidden;
+  position: relative;
+  z-index: 1;
   min-height: 0;
   padding: 16px;
   opacity: 1;
@@ -405,6 +409,8 @@ textarea.text-input:focus {
 }
 
 .plan-step-summary {
+  position: relative;
+  z-index: 2;
   min-height: 44px;
   border: 0;
   border-radius: 0;
@@ -466,12 +472,137 @@ textarea.text-input:focus {
   will-change: transform, opacity;
 }
 
-.plan-morph-step.is-shrink-target .plan-summary-value {
-  animation: planValueShrinkIn 430ms var(--spring) both;
+.plan-morph-step.is-shrink-target > .plan-step-summary {
+  animation: planSummaryReveal 220ms ease-out 460ms both;
 }
 
-.plan-morph-step.is-shrink-target .plan-step-summary svg {
-  animation: planIconShrinkIn 360ms var(--spring) both;
+.plan-morph-step.is-forward-exit > .plan-active-content {
+  animation: planContentFoldOut 520ms var(--spring) both;
+}
+
+.plan-morph-step.is-forward-exit {
+  z-index: 5;
+  overflow: visible;
+}
+
+.plan-morph-step.is-forward-enter {
+  animation: planCardUnfoldIn 560ms var(--spring) both;
+}
+
+.plan-morph-step.is-forward-enter > .plan-active-content {
+  animation: planContentUnfoldIn 560ms var(--spring) both;
+}
+
+.plan-morph-bridge {
+  --bridge-start-x: 0px;
+  --bridge-start-y: 54px;
+  --bridge-start-scale: 1.08;
+  --bridge-mid-x: 10px;
+  --bridge-mid-y: 22px;
+  --bridge-start-shadow: 0 8px 18px rgba(31, 45, 61, 0.10);
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid rgba(216, 222, 217, 0.92);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 900;
+  line-height: 1.1;
+  pointer-events: none;
+  transform-origin: left center;
+  will-change: transform, opacity, border-color, background-color, box-shadow;
+  animation: planBridgeFold 660ms linear both;
+}
+
+.plan-morph-bridge svg {
+  flex: 0 0 auto;
+  margin-right: 8px;
+  color: var(--teal-dark);
+}
+
+.plan-morph-bridge.is-title {
+  --bridge-start-x: 32px;
+  --bridge-start-y: 54px;
+  --bridge-mid-x: 12px;
+  --bridge-mid-y: 22px;
+  --bridge-start-scale: 1.035;
+}
+
+.plan-morph-bridge.is-items {
+  --bridge-start-x: 0px;
+  --bridge-start-y: 56px;
+  --bridge-mid-x: 0px;
+  --bridge-mid-y: 24px;
+  --bridge-start-scale: 1;
+}
+
+.plan-morph-bridge.is-graph {
+  --bridge-start-x: 0px;
+  --bridge-start-y: 58px;
+  --bridge-mid-x: 0px;
+  --bridge-mid-y: 26px;
+  --bridge-start-scale: 1.04;
+}
+
+.plan-bridge-main,
+.plan-bridge-chip-list {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.plan-bridge-main {
+  display: block;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-bridge-chip-list {
+  display: flex;
+  align-items: center;
+  grid-gap: 6px;
+  white-space: nowrap;
+}
+
+.plan-bridge-chip {
+  max-width: 124px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(216, 222, 217, 0.92);
+  border-radius: 7px;
+  background: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform-origin: left center;
+  animation: planBridgeChipFold 660ms linear both;
+}
+
+.plan-bridge-chip:nth-child(2) { --chip-start-x: -6px; --chip-start-y: 2px; --chip-mid-x: -3px; --chip-mid-y: 1px; }
+.plan-bridge-chip:nth-child(3) { --chip-start-x: -12px; --chip-start-y: 4px; --chip-mid-x: -6px; --chip-mid-y: 2px; }
+.plan-bridge-chip:nth-child(4) { --chip-start-x: -18px; --chip-start-y: 6px; --chip-mid-x: -9px; --chip-mid-y: 3px; }
+.plan-bridge-chip:nth-child(5) { --chip-start-x: -24px; --chip-start-y: 8px; --chip-mid-x: -12px; --chip-mid-y: 4px; }
+.plan-bridge-chip:nth-child(6) { --chip-start-x: -30px; --chip-start-y: 10px; --chip-mid-x: -15px; --chip-mid-y: 5px; }
+.plan-bridge-chip:nth-child(7) { --chip-start-x: -36px; --chip-start-y: 12px; --chip-mid-x: -18px; --chip-mid-y: 6px; }
+.plan-bridge-chip:nth-child(8) { --chip-start-x: -42px; --chip-start-y: 14px; --chip-mid-x: -21px; --chip-mid-y: 7px; }
+
+.plan-morph-step.is-forward-exit .plan-step-head,
+.plan-morph-step.is-forward-exit .plan-title-row,
+.plan-morph-step.is-forward-exit .plan-items-grid,
+.plan-morph-step.is-forward-exit .plan-item-actions,
+.plan-morph-step.is-forward-exit .plan-graph-options,
+.plan-morph-step.is-forward-exit .plan-step-actions {
+  transition: transform 480ms var(--spring), opacity 220ms ease;
+  transform: translateY(-14px) scale(0.96);
+  opacity: 0;
 }
 
 .plan-step.plan-morph-step.is-active {
@@ -514,6 +645,10 @@ textarea.text-input:focus {
   opacity: 0;
   transform: translateY(-10px) scale(0.94);
   pointer-events: none;
+}
+
+.plan-step.plan-morph-step.is-shrink-target > .plan-step-summary {
+  animation: planSummaryReveal 220ms ease-out 460ms both;
 }
 
 .plan-step-head {
@@ -814,32 +949,113 @@ textarea.text-input:focus {
   }
 }
 
-@keyframes planValueShrinkIn {
-  from {
-    opacity: 0.98;
-    transform: translateY(15px) scale(1.16);
+@keyframes planSummaryReveal {
+  0%,
+  58% {
+    opacity: 0;
+    transform: translateY(2px) scale(0.992);
   }
-  68% {
+  78% {
     opacity: 1;
-    transform: translateY(-1px) scale(0.982);
+    transform: translateY(-1px) scale(1.004);
   }
-  to {
+  100% {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
 }
 
-@keyframes planIconShrinkIn {
-  from {
-    opacity: 0.86;
-    transform: translateY(10px) scale(1.08);
-  }
-  70% {
+@keyframes planBridgeFold {
+  0% {
     opacity: 1;
-    transform: translateY(-1px) scale(0.98);
+    border-color: rgba(216, 222, 217, 0.92);
+    background: #ffffff;
+    box-shadow: var(--bridge-start-shadow);
+    transform: translate(var(--bridge-start-x), var(--bridge-start-y)) scale(var(--bridge-start-scale));
   }
-  to {
+  44% {
     opacity: 1;
+    border-color: rgba(216, 222, 217, 0.72);
+    background: #ffffff;
+    box-shadow: 0 7px 16px rgba(31, 45, 61, 0.08);
+    transform: translate(var(--bridge-mid-x), var(--bridge-mid-y)) scale(1.012);
+  }
+  72% {
+    opacity: 1;
+    border-color: rgba(216, 222, 217, 0.34);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 4px 10px rgba(31, 45, 61, 0.05);
+    transform: translate(0, -1px) scale(0.988);
+  }
+  86% {
+    opacity: 0.72;
+    border-color: rgba(216, 222, 217, 0);
+    background: rgba(255, 255, 255, 0);
+    box-shadow: 0 0 0 rgba(31, 45, 61, 0);
+    transform: translate(0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    border-color: rgba(216, 222, 217, 0);
+    background: rgba(255, 255, 255, 0);
+    box-shadow: 0 0 0 rgba(31, 45, 61, 0);
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes planBridgeChipFold {
+  0% {
+    transform: translate(var(--chip-start-x, 0), var(--chip-start-y, 0)) scale(1.04);
+  }
+  46% {
+    transform: translate(var(--chip-mid-x, 0), var(--chip-mid-y, 0)) scale(1.012);
+  }
+  72% {
+    transform: translate(0, 0) scale(0.982);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes planContentFoldOut {
+  0% {
+    opacity: 0.94;
+    transform: translateY(0) scale(1);
+  }
+  42% {
+    opacity: 0.26;
+    transform: translateY(-14px) scale(0.962);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-22px) scale(0.91);
+  }
+}
+
+@keyframes planContentUnfoldIn {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.976);
+  }
+  58% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.006);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes planCardUnfoldIn {
+  0% {
+    transform: translateY(12px) scale(0.992);
+  }
+  66% {
+    transform: translateY(-2px) scale(1.002);
+  }
+  100% {
     transform: translateY(0) scale(1);
   }
 }
