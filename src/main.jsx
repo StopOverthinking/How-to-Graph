@@ -12,7 +12,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
-  ClipboardList,
   Download,
   Eraser,
   Grid3X3,
@@ -24,35 +23,22 @@ import {
   Share2,
   Table2,
   Trash2,
-  Undo2,
-  UsersRound
+  Undo2
 } from 'lucide-react';
 import './styles.css';
 
 const TABS = [
-  { id: 'survey', label: '조사', icon: ClipboardList },
-  { id: 'plan', label: '계획 세우기', icon: UsersRound },
+  { id: 'plan', label: '계획', icon: PenLine },
   { id: 'table', label: '표 그리기', icon: Table2 },
   { id: 'graph', label: '그래프 그리기', icon: PieChart }
 ];
 
-const ITEM_COLORS = ['#ff6b6b', '#f7b731', '#20bf6b', '#45aaf2', '#a55eea', '#fd9644'];
+const DEFAULT_PLAN_ITEM_COUNT = 4;
+const MIN_PLAN_ITEM_COUNT = 1;
+const MAX_PLAN_ITEM_COUNT = 8;
 const GRAPH_COLORS = ['#5ac8a8', '#ffb84d', '#ff6b6b', '#4d96ff', '#9b6bff', '#7bd389', '#f78fb3', '#6c7a89'];
-const LEGACY_DEFAULT_QUESTION = '우리 반 친구들이 가장 좋아하는 것은?';
-const LEGACY_DEFAULT_OPTIONS = ['좋아하는 간식', '좋아하는 놀이', '가고 싶은 장소'];
-const CHOICES = ['눈금', '표', '제목', '단위', '크기', '항목', '그래프', '합계', '색깔', '백분율', '범례', '순서'];
 const COUNT_ROW_LABEL = '인원(명)';
 const PERCENTAGE_ROW_LABEL = '백분율(%)';
-const STICKER_SIZE_PX = 23;
-const MAX_STICKER_OVERLAP_RATIO = 0.1;
-const STICKER_PLACEMENT_STEP_PX = 1;
-const PLAN_TEMPLATES = [
-  { id: 'summary', prefix: '조사 결과를 ', josa: 'ro', after: ' 만들어 정리한다.' },
-  { id: 'kind', prefix: '적절한 ', after: ' 종류를 정한다.' },
-  { id: 'percent', prefix: '각 항목의 ', josa: 'eul', after: ' 구한다.' },
-  { id: 'draw', prefix: '', josa: 'eul', after: ' 그린다.' },
-  { id: 'present', prefix: '', josa: 'eul', after: ' 발표한다.' }
-];
 const SHARE_VERSION = 2;
 const SHARE_DEFAULT_TOKEN = '0';
 const SHARE_CHUNK_PREFIX = 'how-to-graph-share-parts:';
@@ -80,28 +66,14 @@ function makeId(prefix) {
 }
 
 function createDefaultState() {
-  const options = Array.from({ length: 3 }, (_, index) => ({
-    id: makeId('option'),
-    label: '',
-    color: ITEM_COLORS[index % ITEM_COLORS.length]
-  }));
-
   return {
-    survey: {
-      question: '',
-      options,
-      stickers: []
-    },
     plan: {
-      answers: PLAN_TEMPLATES.map(() => ''),
-      roles: []
+      title: '',
+      items: makeEmptyRow(DEFAULT_PLAN_ITEM_COUNT)
     },
     table: {
-      headerRow: makeEmptyRow(options.length + 2),
-      rows: [
-        makeEmptyRow(options.length + 2),
-        makeEmptyRow(options.length + 2)
-      ],
+      headerRow: makeEmptyRow(DEFAULT_PLAN_ITEM_COUNT + 1),
+      rows: fitRows([], DEFAULT_PLAN_ITEM_COUNT + 1),
       tableDefaultsCleared: true
     },
     graph: {
@@ -119,52 +91,23 @@ function createDefaultState() {
 function normalizeLoadedState(raw) {
   const fallback = createDefaultState();
   if (!raw || typeof raw !== 'object') return fallback;
-  const survey = raw.survey || fallback.survey;
-  const sourceOptions = Array.isArray(survey.options) && survey.options.length ? survey.options : fallback.survey.options;
-  const hasStickers = Array.isArray(survey.stickers) && survey.stickers.length > 0;
-  const isLegacyDefaultSurvey = !hasStickers
-    && survey.question === LEGACY_DEFAULT_QUESTION
-    && sourceOptions.length === LEGACY_DEFAULT_OPTIONS.length
-    && sourceOptions.every((option, index) => option.label === LEGACY_DEFAULT_OPTIONS[index]);
-  const options = sourceOptions.map((option, index) => ({
-    id: option.id || makeId('option'),
-    label: isLegacyDefaultSurvey ? '' : (typeof option.label === 'string' ? option.label : ''),
-    color: option.color || ITEM_COLORS[index % ITEM_COLORS.length]
-  }));
-  const optionIds = new Set(options.map((option) => option.id));
-  const stickers = Array.isArray(survey.stickers)
-    ? survey.stickers
-      .filter((sticker) => sticker && optionIds.has(sticker.optionId))
-      .map((sticker) => {
-        const x = Number(sticker.x);
-        const y = Number(sticker.y);
-        return {
-          id: sticker.id || makeId('sticker'),
-          optionId: sticker.optionId,
-          x: clamp(Number.isFinite(x) ? x : 50, 5, 95),
-          y: clamp(Number.isFinite(y) ? y : 50, 8, 92)
-        };
-      })
-    : [];
-  const width = options.length + 2;
   const table = raw.table && typeof raw.table === 'object' ? raw.table : fallback.table;
   const existingRows = Array.isArray(table.rows) ? table.rows : fallback.table.rows;
   const clearLegacyTableDefaults = table.tableDefaultsCleared !== true;
-  const headerRow = fitHeaderRow(table.headerRow, width, clearLegacyTableDefaults);
-  const rows = fitRows(existingRows, width);
-  const planAnswers = raw.plan && Array.isArray(raw.plan.answers)
-    ? PLAN_TEMPLATES.map((_, index) => raw.plan.answers[index] || '')
-    : fallback.plan.answers;
+  const rawPlan = raw.plan && typeof raw.plan === 'object' ? raw.plan : {};
+  const itemCount = getPlanItemCount(rawPlan.items, table.headerRow);
+  const tableWidth = itemCount + 1;
+  const headerRow = fitHeaderRow(table.headerRow, tableWidth, clearLegacyTableDefaults);
+  const rows = fitRows(existingRows, tableWidth);
+  const items = fitRow(rawPlan.items, itemCount);
+  for (let index = 0; index < itemCount; index += 1) {
+    if (!items[index] && headerRow[index + 1]) items[index] = headerRow[index + 1];
+  }
 
   return {
-    survey: {
-      question: isLegacyDefaultSurvey ? '' : (typeof survey.question === 'string' ? survey.question : fallback.survey.question),
-      options,
-      stickers
-    },
     plan: {
-      answers: planAnswers,
-      roles: normalizePlanRoles(raw.plan && raw.plan.roles, planAnswers)
+      title: typeof rawPlan.title === 'string' ? rawPlan.title : (headerRow[0] || ''),
+      items
     },
     table: { headerRow, rows, tableDefaultsCleared: true },
     graph: {
@@ -179,31 +122,27 @@ function normalizeLoadedState(raw) {
   };
 }
 
-function normalizePlanRoles(rawRoles, answers) {
-  if (!Array.isArray(rawRoles)) return [];
-  const hasRoleName = rawRoles.some((role) => {
-    if (typeof role === 'string') return Boolean(role);
-    return Boolean(role && typeof role.name === 'string' && role.name);
-  });
-  if (!hasRoleName) return [];
-
-  return PLAN_TEMPLATES.map((_, index) => {
-    const role = rawRoles[index];
-    const existingRole = role && typeof role === 'object' && !Array.isArray(role) ? role : {};
-    const name = typeof role === 'string'
-      ? role
-      : (typeof existingRole.name === 'string' ? existingRole.name : '');
-
-    return {
-      id: existingRole.id || makeId('role'),
-      sentence: buildSentence(Array.isArray(answers) ? answers[index] : '', index),
-      name
-    };
-  });
-}
-
 function makeEmptyRow(width) {
   return Array(width).fill('');
+}
+
+function normalizePlanItemCount(value, fallback = DEFAULT_PLAN_ITEM_COUNT) {
+  const count = Number(value);
+  if (!Number.isFinite(count)) return fallback;
+  return clamp(Math.round(count), MIN_PLAN_ITEM_COUNT, MAX_PLAN_ITEM_COUNT);
+}
+
+function getPlanItemCount(items, headerRow, fallback = DEFAULT_PLAN_ITEM_COUNT) {
+  if (Array.isArray(items) && items.length) return normalizePlanItemCount(items.length, fallback);
+  if (Array.isArray(headerRow) && headerRow.length > 1) return normalizePlanItemCount(headerRow.length - 1, fallback);
+  return normalizePlanItemCount(fallback);
+}
+
+function getTableWidth(table) {
+  const headerLength = table && Array.isArray(table.headerRow) ? table.headerRow.length : 0;
+  const rowLength = table && Array.isArray(table.rows) && Array.isArray(table.rows[0]) ? table.rows[0].length : 0;
+  const width = Math.max(headerLength, rowLength);
+  return width > 1 ? normalizePlanItemCount(width - 1) + 1 : DEFAULT_PLAN_ITEM_COUNT + 1;
 }
 
 function fitHeaderRow(row, width, clearLegacyDefaults = false) {
@@ -252,35 +191,6 @@ function sanitizeDividers(dividers) {
     .filter((value, index, array) => array.indexOf(value) === index);
 }
 
-function getFinalConsonantIndex(word) {
-  const characters = Array.from((word || '').trim());
-  const lastCharacter = characters[characters.length - 1];
-  if (!lastCharacter) return 0;
-  const code = lastCharacter.charCodeAt(0);
-  if (code < 0xac00 || code > 0xd7a3) return 0;
-  return (code - 0xac00) % 28;
-}
-
-function pickJosa(word, type) {
-  const finalConsonant = getFinalConsonantIndex(word);
-  if (type === 'ro') return finalConsonant && finalConsonant !== 8 ? '으로' : '로';
-  if (type === 'eul') return finalConsonant ? '을' : '를';
-  return '';
-}
-
-function getTemplateSuffix(template, answer) {
-  const word = answer && answer.trim() ? answer.trim() : '';
-  if (!template.josa) return template.after;
-  const placeholderJosa = template.josa === 'ro' ? '(으)로' : '을/를';
-  return `${word ? pickJosa(word, template.josa) : placeholderJosa}${template.after}`;
-}
-
-function buildSentence(answer, index) {
-  const template = PLAN_TEMPLATES[index];
-  const word = answer && answer.trim() ? answer.trim() : '___';
-  return `${template.prefix}${word}${getTemplateSuffix(template, answer)}`;
-}
-
 function getSegments(dividers) {
   const points = [0].concat(sanitizeDividers(dividers), [100]);
   const segments = [];
@@ -294,82 +204,6 @@ function getSegments(dividers) {
   return segments;
 }
 
-function findNearestStickerPoint(point, stickers) {
-  const fieldWidth = Number(point.fieldWidth);
-  const fieldHeight = Number(point.fieldHeight);
-  const stickerSize = Number(point.stickerSize) || STICKER_SIZE_PX;
-  if (!Number.isFinite(fieldWidth) || !Number.isFinite(fieldHeight) || fieldWidth <= 0 || fieldHeight <= 0) {
-    return {
-      x: clamp(Number.isFinite(point.x) ? point.x : 50, 5, 95),
-      y: clamp(Number.isFinite(point.y) ? point.y : 50, 8, 92)
-    };
-  }
-
-  const stickerRadius = stickerSize / 2;
-  const minX = Math.min(stickerRadius, fieldWidth / 2);
-  const maxX = Math.max(fieldWidth - stickerRadius, minX);
-  const minY = Math.min(stickerRadius, fieldHeight / 2);
-  const maxY = Math.max(fieldHeight - stickerRadius, minY);
-  const pointX = Number(point.x);
-  const pointY = Number(point.y);
-  const desiredX = clamp(((Number.isFinite(pointX) ? pointX : 50) / 100) * fieldWidth, minX, maxX);
-  const desiredY = clamp(((Number.isFinite(pointY) ? pointY : 50) / 100) * fieldHeight, minY, maxY);
-  const minDistance = Math.ceil(stickerSize * (1 - MAX_STICKER_OVERLAP_RATIO));
-  const minDistanceSq = minDistance * minDistance;
-  const existingCenters = stickers
-    .map((sticker) => ({
-      x: (Number(sticker.x) / 100) * fieldWidth,
-      y: (Number(sticker.y) / 100) * fieldHeight
-    }))
-    .filter((sticker) => Number.isFinite(sticker.x) && Number.isFinite(sticker.y));
-
-  function canPlace(candidateX, candidateY) {
-    return existingCenters.every((sticker) => {
-      const dx = candidateX - sticker.x;
-      const dy = candidateY - sticker.y;
-      return dx * dx + dy * dy >= minDistanceSq;
-    });
-  }
-
-  if (canPlace(desiredX, desiredY)) {
-    return {
-      x: (desiredX / fieldWidth) * 100,
-      y: (desiredY / fieldHeight) * 100
-    };
-  }
-
-  let bestPoint = null;
-  let bestDistanceSq = Infinity;
-  const startX = Math.ceil(minX);
-  const endX = Math.floor(maxX);
-  const startY = Math.ceil(minY);
-  const endY = Math.floor(maxY);
-
-  for (let candidateY = startY; candidateY <= endY; candidateY += STICKER_PLACEMENT_STEP_PX) {
-    for (let candidateX = startX; candidateX <= endX; candidateX += STICKER_PLACEMENT_STEP_PX) {
-      const dx = candidateX - desiredX;
-      const dy = candidateY - desiredY;
-      const distanceSq = dx * dx + dy * dy;
-      if (distanceSq >= bestDistanceSq || !canPlace(candidateX, candidateY)) continue;
-      bestDistanceSq = distanceSq;
-      bestPoint = { x: candidateX, y: candidateY };
-    }
-  }
-
-  if (!bestPoint) return null;
-  return {
-    x: (bestPoint.x / fieldWidth) * 100,
-    y: (bestPoint.y / fieldHeight) * 100
-  };
-}
-
-function getStickerDiameter(target) {
-  const renderedSticker = target ? target.querySelector('.sticker') : null;
-  if (!renderedSticker || typeof window === 'undefined') return STICKER_SIZE_PX;
-  const width = Number.parseFloat(window.getComputedStyle(renderedSticker).width);
-  return Number.isFinite(width) && width > 0 ? width : STICKER_SIZE_PX;
-}
-
 function App() {
   const [state, setState] = useState(() => {
     try {
@@ -381,9 +215,7 @@ function App() {
       return createDefaultState();
     }
   });
-  const [activeTab, setActiveTab] = useState('survey');
-  const [surveyScreen, setSurveyScreen] = useState('setup');
-  const [planScreen, setPlanScreen] = useState('steps');
+  const [activeTab, setActiveTab] = useState('plan');
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -414,52 +246,6 @@ function App() {
         <nav className="tabbar" aria-label="작업 단계">
           {TABS.map((tab) => {
             const Icon = tab.icon;
-            if (tab.id === 'survey' && activeTab === 'survey') {
-              return (
-                <div className="tab-button tab-mode-switch is-active" key={tab.id} role="group" aria-label="조사">
-                  <button
-                    className={`tab-mode-choice ${surveyScreen === 'setup' ? 'is-active' : ''}`}
-                    type="button"
-                    onClick={() => setSurveyScreen('setup')}
-                    aria-pressed={surveyScreen === 'setup'}
-                  >
-                    준비
-                  </button>
-                  <button
-                    className={`tab-mode-choice ${surveyScreen === 'board' ? 'is-active' : ''}`}
-                    type="button"
-                    onClick={() => setSurveyScreen('board')}
-                    aria-pressed={surveyScreen === 'board'}
-                  >
-                    실시
-                  </button>
-                </div>
-              );
-            }
-
-            if (tab.id === 'plan' && activeTab === 'plan') {
-              return (
-                <div className="tab-button tab-mode-switch is-active" key={tab.id} role="group" aria-label="계획 세우기">
-                  <button
-                    className={`tab-mode-choice ${planScreen === 'steps' ? 'is-active' : ''}`}
-                    type="button"
-                    onClick={() => setPlanScreen('steps')}
-                    aria-pressed={planScreen === 'steps'}
-                  >
-                    절차
-                  </button>
-                  <button
-                    className={`tab-mode-choice ${planScreen === 'roles' ? 'is-active' : ''}`}
-                    type="button"
-                    onClick={() => setPlanScreen('roles')}
-                    aria-pressed={planScreen === 'roles'}
-                  >
-                    역할
-                  </button>
-                </div>
-              );
-            }
-
             return (
               <button
                 key={tab.id}
@@ -480,23 +266,18 @@ function App() {
 
       <main className="stage">
         <section className="tab-panel" key={activeTab}>
-          {activeTab === 'survey' && (
-            <SurveyWorkspace
-              survey={state.survey}
-              screen={surveyScreen}
-              onChange={(patch) => patchState('survey', patch)}
-            />
-          )}
           {activeTab === 'plan' && (
             <PlanWorkspace
               plan={state.plan}
-              screen={planScreen}
+              table={state.table}
+              graph={state.graph}
               onChange={(patch) => patchState('plan', patch)}
+              onTableChange={(patch) => patchState('table', patch)}
+              onGraphChange={(patch) => patchState('graph', patch)}
             />
           )}
           {activeTab === 'table' && (
             <TableWorkspace
-              survey={state.survey}
               table={state.table}
               onTableChange={(patch) => patchState('table', patch)}
             />
@@ -520,348 +301,372 @@ function App() {
   );
 }
 
-function SurveyWorkspace({ survey, screen, onChange }) {
-  const [activePaletteId, setActivePaletteId] = useState(null);
-  const previewColumns = survey.options.length > 4 ? 'many-options' : '';
+function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphChange }) {
+  const titleRef = useRef(null);
+  const itemsRef = useRef(null);
+  const graphRef = useRef(null);
+  const planSheetRef = useRef(null);
+  const pendingScrollRef = useRef(null);
+  const itemCount = getPlanItemCount(plan.items, table.headerRow);
+  const tableWidth = itemCount + 1;
+  const headerRow = fitHeaderRow(table.headerRow, tableWidth);
+  const title = typeof plan.title === 'string' ? plan.title : (headerRow[0] || '');
+  const items = fitRow(plan.items, itemCount);
 
-  function updateOption(optionId, patch) {
-    onChange({
-      options: survey.options.map((option) => (option.id === optionId ? { ...option, ...patch } : option))
+  for (let index = 0; index < itemCount; index += 1) {
+    if (!items[index] && headerRow[index + 1]) items[index] = headerRow[index + 1];
+  }
+
+  const titleComplete = title.trim().length > 0;
+  const itemsComplete = items.every((item) => item.trim().length > 0);
+  const graphTypeLabel = graph.type === 'pie' ? '원그래프' : '띠그래프';
+  const [visibleStep, setVisibleStep] = useState(() => {
+    if (itemsComplete) return 3;
+    if (titleComplete) return 2;
+    return 1;
+  });
+  const [activeStep, setActiveStep] = useState(() => {
+    if (itemsComplete) return 3;
+    if (titleComplete) return 2;
+    return 1;
+  });
+
+  useEffect(() => {
+    setVisibleStep((currentStep) => {
+      if (!titleComplete) return 1;
+      if (!itemsComplete) return Math.min(currentStep, 2);
+      return currentStep;
     });
-  }
-
-  function addOption() {
-    if (survey.options.length >= 8) return;
-    onChange({
-      options: survey.options.concat({
-        id: makeId('option'),
-        label: '',
-        color: ITEM_COLORS[survey.options.length % ITEM_COLORS.length]
-      })
+    setActiveStep((currentStep) => {
+      if (!titleComplete) return 1;
+      if (!itemsComplete && currentStep > 2) return 2;
+      return currentStep;
     });
+  }, [titleComplete, itemsComplete]);
+
+  useEffect(() => {
+    if (!pendingScrollRef.current || !pendingScrollRef.current.current) return;
+    scrollTo(pendingScrollRef.current);
+    pendingScrollRef.current = null;
+  }, [visibleStep, activeStep]);
+
+  function scrollTo(ref) {
+    if (ref.current) ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function removeOption(optionId) {
-    if (survey.options.length <= 2) return;
-    onChange({
-      options: survey.options.filter((option) => option.id !== optionId),
-      stickers: survey.stickers.filter((sticker) => sticker.optionId !== optionId)
-    });
-    if (activePaletteId === optionId) setActivePaletteId(null);
+  function goToStep(step, ref) {
+    pendingScrollRef.current = ref;
+    setActiveStep(step);
+    setVisibleStep((currentStep) => Math.max(currentStep, step));
   }
 
-  function placeSticker(optionId, point) {
-    onChange((current) => {
-      const placedPoint = findNearestStickerPoint(
-        point,
-        current.stickers.filter((sticker) => sticker.optionId === optionId)
-      );
-      if (!placedPoint) return current;
-
-      return {
-        ...current,
-        stickers: current.stickers.concat({
-          id: makeId('sticker'),
-          optionId,
-          x: placedPoint.x,
-          y: placedPoint.y
-        })
-      };
-    });
-  }
-
-  function undoSticker() {
-    if (!survey.stickers.length) return;
-    if (window.confirm('마지막으로 붙인 스티커를 떼어낼까요?')) {
-      onChange({ stickers: survey.stickers.slice(0, -1) });
-    }
-  }
-
-  if (screen === 'board') {
-    return (
-      <div className="survey-board-screen">
-        <div className="canvas-area">
-          <SurveyBoard
-            survey={survey}
-            onSticker={placeSticker}
-            className={previewColumns}
-            actions={(
-              <button className="icon-button" type="button" onClick={undoSticker} disabled={!survey.stickers.length} title="실행 취소" aria-label="실행 취소">
-                <Undo2 size={18} aria-hidden="true" />
-              </button>
-            )}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="survey-setup-screen">
-      <section className="panel-block survey-setup-panel">
-        <label className="field-label">
-          제목
-          <input
-            className="text-input"
-            value={survey.question}
-            onChange={(event) => onChange({ question: event.target.value })}
-            placeholder="제목"
-          />
-        </label>
-
-        <div className="option-editor-list">
-          {survey.options.map((option, index) => (
-            <div className="option-editor-shell" key={option.id}>
-              <div className="option-editor">
-                <button
-                  className={`color-dot-button ${activePaletteId === option.id ? 'is-active' : ''}`}
-                  style={{ backgroundColor: option.color }}
-                  type="button"
-                  onClick={() => setActivePaletteId(activePaletteId === option.id ? null : option.id)}
-                  title="항목 색 고르기"
-                  aria-label={`항목${index + 1} 색 고르기`}
-                />
-                <input
-                  className="text-input compact"
-                  value={option.label}
-                  onChange={(event) => updateOption(option.id, { label: event.target.value })}
-                  placeholder={`항목${index + 1}`}
-                  aria-label={`항목${index + 1}`}
-                />
-                <button
-                  className="icon-button danger"
-                  type="button"
-                  onClick={() => removeOption(option.id)}
-                  disabled={survey.options.length <= 2}
-                  title="항목 지우기"
-                >
-                  <Trash2 size={17} aria-hidden="true" />
-                </button>
-              </div>
-              {activePaletteId === option.id && (
-                <div className="item-color-palette" aria-label={`항목${index + 1} 색`}>
-                  {ITEM_COLORS.map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      className={`swatch ${option.color === color ? 'is-active' : ''}`}
-                      style={{ backgroundColor: color }}
-                      onClick={() => {
-                        updateOption(option.id, { color });
-                        setActivePaletteId(null);
-                      }}
-                      title="색 고르기"
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="survey-setup-actions">
-          <button className="icon-text-button" type="button" onClick={addOption} disabled={survey.options.length >= 8}>
-            <Plus size={18} aria-hidden="true" />
-            <span>항목 추가</span>
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function SurveyBoard({ survey, onSticker, readOnly = false, compact = false, className = '', actions = null }) {
-  return (
-    <div className={`survey-board ${compact ? 'compact-board' : ''} ${className}`}>
-      <div className={`survey-question ${actions ? 'with-actions' : ''}`}>
-        <span className="survey-question-text">{survey.question || '제목'}</span>
-        {actions && <div className="survey-board-actions">{actions}</div>}
-      </div>
-      <div className="survey-columns" style={{ gridTemplateColumns: `repeat(${survey.options.length}, minmax(132px, 1fr))` }}>
-        {survey.options.map((option, index) => (
-          <StickerColumn
-            key={option.id}
-            option={option}
-            optionIndex={index}
-            stickers={survey.stickers.filter((sticker) => sticker.optionId === option.id)}
-            onSticker={onSticker}
-            readOnly={readOnly}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StickerColumn({ option, optionIndex, stickers, onSticker, readOnly }) {
-  const touchGuard = useRef(0);
-  const optionLabel = option.label || `항목${optionIndex + 1}`;
-
-  function commitFromPoint(clientX, clientY, target) {
-    if (readOnly) return;
-    const rect = target.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * 100;
-    const y = ((clientY - rect.top) / rect.height) * 100;
-    onSticker(option.id, {
-      x,
-      y,
-      fieldWidth: rect.width,
-      fieldHeight: rect.height,
-      stickerSize: getStickerDiameter(target)
-    });
-  }
-
-  function handleTouchStart(event) {
-    if (!event.touches || !event.touches.length) return;
-    touchGuard.current = Date.now();
+  function handleAdvanceKey(event, step, ref) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    commitFromPoint(event.touches[0].clientX, event.touches[0].clientY, event.currentTarget);
+    goToStep(step, ref);
   }
 
-  function handleMouseDown(event) {
-    if (Date.now() - touchGuard.current < 650) return;
-    commitFromPoint(event.clientX, event.clientY, event.currentTarget);
-  }
-
-  return (
-    <div className="survey-column">
-      <div className="survey-column-title" style={{ borderColor: option.color }}>
-        {optionLabel}
-      </div>
-      <div
-        className={`sticker-field ${readOnly ? 'is-readonly' : ''}`}
-        onTouchStart={handleTouchStart}
-        onMouseDown={handleMouseDown}
-        role={readOnly ? 'img' : 'button'}
-        aria-label={`${optionLabel} 스티커 붙이기`}
-      >
-        {stickers.map((sticker) => (
-          <span
-            key={sticker.id}
-            className="sticker"
-            style={{
-              left: `${sticker.x}%`,
-              top: `${sticker.y}%`,
-              backgroundColor: option.color
-            }}
-            aria-hidden="true"
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PlanWorkspace({ plan, screen, onChange }) {
-  const [activeBlank, setActiveBlank] = useState(0);
-  const isRolesScreen = screen === 'roles';
-
-  function updateAnswer(index, value) {
-    const answers = plan.answers.slice();
-    answers[index] = value;
-    onChange({ answers });
-  }
-
-  function chooseWord(word) {
-    const answers = plan.answers.slice();
-    answers[activeBlank] = word;
-    onChange({ answers });
-
-    const nextBlank = answers.findIndex((answer, index) => index > activeBlank && !answer);
-    if (nextBlank !== -1) setActiveBlank(nextBlank);
-  }
-
-  function updateRole(index, name) {
-    const roles = PLAN_TEMPLATES.map((_, rowIndex) => {
-      const currentRole = plan.roles[rowIndex] || {};
-      const currentName = typeof currentRole.name === 'string' ? currentRole.name : '';
-      return {
-        id: currentRole.id || makeId('role'),
-        sentence: buildSentence(plan.answers[rowIndex], rowIndex),
-        name: rowIndex === index ? name : currentName
-      };
+  function updateHeaderCell(cellIndex, value) {
+    onTableChange((currentTable) => {
+      const nextHeader = fitHeaderRow(currentTable.headerRow, tableWidth);
+      nextHeader[cellIndex] = value;
+      return { ...currentTable, headerRow: nextHeader };
     });
-    onChange({ roles });
+  }
+
+  function updateTitle(value) {
+    onChange({ title: value });
+    updateHeaderCell(0, value);
+  }
+
+  function updateItem(index, value) {
+    const nextItems = items.slice();
+    nextItems[index] = value;
+    syncItems(nextItems);
+  }
+
+  function syncItems(nextItems, removedIndex = null) {
+    onChange({ items: nextItems });
+    onTableChange((currentTable) => {
+      const nextWidth = nextItems.length + 1;
+      const sourceWidth = Math.max(getTableWidth(currentTable), tableWidth);
+      let nextHeader = fitHeaderRow(currentTable.headerRow, sourceWidth);
+      let nextRow = fitRow(Array.isArray(currentTable.rows) ? currentTable.rows[0] : null, sourceWidth);
+
+      if (Number.isInteger(removedIndex)) {
+        nextHeader.splice(removedIndex + 1, 1);
+        nextRow.splice(removedIndex + 1, 1);
+      }
+
+      nextHeader = fitHeaderRow(nextHeader, nextWidth);
+      nextRow = fitRow(nextRow, nextWidth);
+      nextHeader[0] = title;
+      nextItems.forEach((item, index) => {
+        nextHeader[index + 1] = item;
+      });
+
+      return { ...currentTable, headerRow: nextHeader, rows: [nextRow] };
+    });
+  }
+
+  function addItem() {
+    if (items.length >= MAX_PLAN_ITEM_COUNT) return;
+    syncItems(items.concat(''));
+  }
+
+  function removeItem(index) {
+    if (items.length <= MIN_PLAN_ITEM_COUNT) return;
+    syncItems(items.filter((_, itemIndex) => itemIndex !== index), index);
+  }
+
+  function chooseGraphType(type) {
+    if (graph.type === type) return;
+    onGraphChange({ type, dividers: [], fills: {} });
+  }
+
+  function summaryText(value, fallback) {
+    return value && value.trim() ? value.trim() : fallback;
   }
 
   return (
     <div className="plan-screen">
-      <section className="panel-block plan-panel">
-        <SectionTitle icon={isRolesScreen ? UsersRound : ClipboardList} title={isRolesScreen ? '역할 나누기' : '절차'} />
-        <div className={`sentence-list ${isRolesScreen ? 'is-roles' : 'is-steps'}`}>
-          {PLAN_TEMPLATES.map((template, index) => {
-            const roleName = plan.roles[index] && typeof plan.roles[index].name === 'string' ? plan.roles[index].name : '';
-            const answer = plan.answers[index] || '';
-            return (
-              <React.Fragment key={template.id}>
-                <div
-                  className={`sentence-row ${!isRolesScreen ? 'is-selectable' : ''} ${activeBlank === index ? 'is-active' : ''}`}
-                  onClick={() => {
-                    if (!isRolesScreen) setActiveBlank(index);
-                  }}
-                  style={{ transitionDelay: isRolesScreen ? `${index * 34}ms` : '0ms' }}
-                >
-                  <div className="sentence-main">
-                    <span>{template.prefix}</span>
-                    <button
-                      type="button"
-                      className="sentence-blank-button"
-                      onClick={() => setActiveBlank(index)}
-                      aria-pressed={activeBlank === index}
-                      aria-label={`${index + 1}번째 빈칸`}
-                    >
-                      {answer || '___'}
-                    </button>
-                    <span>{getTemplateSuffix(template, answer)}</span>
-                  </div>
-                </div>
-                <label
-                  className="role-name-slot"
-                  aria-hidden={!isRolesScreen}
-                >
-                  <input
-                    className="text-input role-name-input"
-                    value={roleName}
-                    onChange={(event) => updateRole(index, event.target.value)}
-                    placeholder="이름"
-                    aria-label={`${index + 1}번째 역할 이름`}
-                    disabled={!isRolesScreen}
-                    tabIndex={isRolesScreen ? undefined : -1}
-                  />
-                </label>
-              </React.Fragment>
-            );
-          })}
-        </div>
-
-        {!isRolesScreen && (
-          <div className="choice-bank">
-            {CHOICES.map((choice) => (
-              <button type="button" key={choice} onClick={() => chooseWord(choice)} className="choice-chip">
-                {choice}
+      <div className="plan-flow">
+        {activeStep === 1 ? (
+          <section className="panel-block plan-step is-active" ref={titleRef}>
+            <div className="plan-step-head">
+              <span className="plan-step-index">1</span>
+              <PenLine size={18} aria-hidden="true" />
+              <span>제목 정하기</span>
+            </div>
+            <div className="plan-title-row">
+              <input
+                className="text-input plan-title-input"
+                value={title}
+                onChange={(event) => updateTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && titleComplete) goToStep(2, itemsRef);
+                }}
+                placeholder="제목"
+                aria-label="제목"
+              />
+              <button
+                className="plan-next-button"
+                type="button"
+                onClick={() => goToStep(2, itemsRef)}
+                onPointerDown={(event) => {
+                  if (!titleComplete) return;
+                  event.preventDefault();
+                  goToStep(2, itemsRef);
+                }}
+                onKeyDown={(event) => handleAdvanceKey(event, 2, itemsRef)}
+                disabled={!titleComplete}
+                title="다음"
+                aria-label="다음: 항목"
+              >
+                <span>다음</span>
+                <ChevronRight size={18} aria-hidden="true" />
               </button>
-            ))}
+            </div>
+          </section>
+        ) : activeStep < 4 ? (
+          <div className="plan-summary-row" ref={titleRef}>
+            <PenLine size={18} aria-hidden="true" />
+            <span>{summaryText(title, '제목')}</span>
           </div>
+        ) : null}
+
+        {activeStep === 4 && visibleStep >= 4 && (
+          <section className="panel-block plan-sheet-screen" ref={planSheetRef}>
+            <h2 className="plan-sheet-title">&lt;자료 정리 계획서&gt;</h2>
+            <div className="plan-sheet-list">
+              <div className="plan-sheet-row">
+                <PenLine size={18} aria-hidden="true" />
+                <span>제목</span>
+                <strong>{summaryText(title, '제목')}</strong>
+              </div>
+              <div className="plan-sheet-row">
+                <Table2 size={18} aria-hidden="true" />
+                <span>항목</span>
+                <strong>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</strong>
+              </div>
+              <div className="plan-sheet-row">
+                <PieChart size={18} aria-hidden="true" />
+                <span>그래프</span>
+                <strong>{graphTypeLabel}</strong>
+              </div>
+            </div>
+            <div className="plan-step-actions">
+              <button
+                className="plan-previous-button"
+                type="button"
+                onClick={() => goToStep(3, graphRef)}
+                title="이전"
+                aria-label="이전: 그래프"
+              >
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>이전</span>
+              </button>
+            </div>
+          </section>
         )}
-      </section>
+
+        {activeStep === 2 && visibleStep >= 2 && (
+          <section className="panel-block plan-step is-active" ref={itemsRef}>
+            <div className="plan-step-head">
+              <span className="plan-step-index">2</span>
+              <Table2 size={18} aria-hidden="true" />
+              <span>표의 항목 정하기</span>
+            </div>
+            <div className="plan-items-grid">
+              {items.map((item, index) => (
+                <div className="plan-item-control" key={index}>
+                  <input
+                    className="text-input compact plan-item-input"
+                    value={item}
+                    onChange={(event) => updateItem(index, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && itemsComplete) goToStep(3, graphRef);
+                    }}
+                    placeholder={`항목 ${index + 1}`}
+                    aria-label={`항목 ${index + 1}`}
+                  />
+                  <button
+                    className="icon-button plan-item-delete-button"
+                    type="button"
+                    onClick={() => removeItem(index)}
+                    disabled={items.length <= MIN_PLAN_ITEM_COUNT}
+                    title="항목 삭제"
+                    aria-label={`항목 ${index + 1} 삭제`}
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="plan-item-actions">
+              <button
+                className="plan-previous-button"
+                type="button"
+                onClick={() => goToStep(1, titleRef)}
+                title="이전"
+                aria-label="이전: 제목"
+              >
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>이전</span>
+              </button>
+              <button
+                className="plan-add-button"
+                type="button"
+                onClick={addItem}
+                disabled={items.length >= MAX_PLAN_ITEM_COUNT}
+                title="항목 추가"
+                aria-label="항목 추가"
+              >
+                <Plus size={17} aria-hidden="true" />
+                <span>항목</span>
+              </button>
+              <button
+                className="plan-next-button"
+                type="button"
+                onClick={() => goToStep(3, graphRef)}
+                onPointerDown={(event) => {
+                  if (!itemsComplete) return;
+                  event.preventDefault();
+                  goToStep(3, graphRef);
+                }}
+                onKeyDown={(event) => handleAdvanceKey(event, 3, graphRef)}
+                disabled={!itemsComplete}
+                title="다음"
+                aria-label="다음: 그래프"
+              >
+                <span>다음</span>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+            </div>
+          </section>
+        )}
+
+        {activeStep === 3 && visibleStep >= 3 && (
+          <>
+            <div className="plan-summary-row" ref={itemsRef}>
+              <Table2 size={18} aria-hidden="true" />
+              <span>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</span>
+            </div>
+            <section className="panel-block plan-step is-active" ref={graphRef}>
+              <div className="plan-step-head">
+                <span className="plan-step-index">3</span>
+                <PieChart size={18} aria-hidden="true" />
+                <span>그래프 종류 선택</span>
+              </div>
+              <div className="plan-graph-options">
+                <button
+                  className={`plan-graph-button ${graph.type === 'bar' ? 'is-active' : ''}`}
+                  type="button"
+                  onClick={() => chooseGraphType('bar')}
+                  aria-pressed={graph.type === 'bar'}
+                >
+                  <Grid3X3 size={18} aria-hidden="true" />
+                  <span>띠그래프</span>
+                </button>
+                <button
+                  className={`plan-graph-button ${graph.type === 'pie' ? 'is-active' : ''}`}
+                  type="button"
+                  onClick={() => chooseGraphType('pie')}
+                  aria-pressed={graph.type === 'pie'}
+                >
+                  <Circle size={18} aria-hidden="true" />
+                  <span>원그래프</span>
+                </button>
+              </div>
+              <div className="plan-step-actions">
+                <button
+                  className="plan-previous-button"
+                  type="button"
+                  onClick={() => goToStep(2, itemsRef)}
+                  title="이전"
+                  aria-label="이전: 항목"
+                >
+                  <ChevronLeft size={18} aria-hidden="true" />
+                  <span>이전</span>
+                </button>
+                <button
+                  className="plan-next-button"
+                  type="button"
+                  onClick={() => goToStep(4, planSheetRef)}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    goToStep(4, planSheetRef);
+                  }}
+                  onKeyDown={(event) => handleAdvanceKey(event, 4, planSheetRef)}
+                  title="다음"
+                  aria-label="다음: 자료 정리 계획서"
+                >
+                  <span>다음</span>
+                  <ChevronRight size={18} aria-hidden="true" />
+                </button>
+              </div>
+            </section>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function TableWorkspace({ survey, table, onTableChange }) {
-  const width = survey.options.length + 2;
-  const fittedHeader = useMemo(() => fitHeaderRow(table.headerRow, width), [table.headerRow, width]);
-  const fittedRows = useMemo(() => fitRows(table.rows, width), [table.rows, width]);
+function TableWorkspace({ table, onTableChange }) {
+  const tableWidth = getTableWidth(table);
+  const fittedHeader = useMemo(() => fitHeaderRow(table.headerRow, tableWidth), [table.headerRow, tableWidth]);
+  const fittedRows = useMemo(() => fitRows(table.rows, tableWidth), [table.rows, tableWidth]);
 
   useEffect(() => {
-    if (!Array.isArray(table.headerRow) || table.headerRow.length !== width || !Array.isArray(table.rows) || table.rows.length !== 2 || table.rows.some((row) => !Array.isArray(row) || row.length !== width)) {
+    if (!Array.isArray(table.headerRow) || table.headerRow.length !== tableWidth || !Array.isArray(table.rows) || table.rows.length !== 2 || table.rows.some((row) => !Array.isArray(row) || row.length !== tableWidth)) {
       onTableChange({ headerRow: fittedHeader, rows: fittedRows });
     }
-  }, [width]);
+  }, [table.headerRow, table.rows, tableWidth, fittedHeader, fittedRows, onTableChange]);
 
   function updateHeaderCell(cellIndex, value) {
     onTableChange((currentTable) => {
-      const headerRow = fitHeaderRow(currentTable.headerRow, width);
+      const headerRow = fitHeaderRow(currentTable.headerRow, tableWidth);
       headerRow[cellIndex] = value;
       return { ...currentTable, headerRow };
     });
@@ -869,7 +674,7 @@ function TableWorkspace({ survey, table, onTableChange }) {
 
   function updateCell(rowIndex, cellIndex, value) {
     onTableChange((currentTable) => {
-      const rows = fitRows(currentTable.rows, width);
+      const rows = fitRows(currentTable.rows, tableWidth);
       rows[rowIndex][cellIndex] = value;
       return { ...currentTable, rows };
     });
@@ -877,13 +682,9 @@ function TableWorkspace({ survey, table, onTableChange }) {
 
   return (
     <div className="table-workspace">
-      <div className="survey-preview-wrap">
-        <SurveyBoard survey={survey} readOnly compact />
-      </div>
-
       <section className="panel-block table-panel">
         <div className="manual-table-wrap">
-          <table className="manual-table">
+          <table className="manual-table" style={{ minWidth: `${Math.max(420, tableWidth * 118)}px` }}>
             <thead>
               <tr>
                 {fittedHeader.map((cell, cellIndex) => (
@@ -1721,31 +1522,23 @@ function makeShareBatchId(text) {
 
 function packShareState(state) {
   const packed = { v: SHARE_VERSION };
-  const survey = state && state.survey ? state.survey : {};
   const plan = state && state.plan ? state.plan : {};
   const table = state && state.table ? state.table : {};
   const graph = state && state.graph ? state.graph : {};
-  const surveyPayload = {};
-  const question = typeof survey.question === 'string' ? survey.question : '';
-  const optionsPayload = packOptionsForShare(survey.options);
-  const stickerPayload = encodeStickersForShare(survey.stickers, survey.options);
-
-  if (question) surveyPayload.q = question;
-  if (optionsPayload) surveyPayload.o = optionsPayload;
-  if (stickerPayload) surveyPayload.k = stickerPayload;
-  if (hasObjectKeys(surveyPayload)) packed.s = surveyPayload;
+  const itemCount = getPlanItemCount(plan.items, table.headerRow);
+  const tableWidth = itemCount + 1;
 
   const planPayload = {};
-  const answerPayload = packIndexedStrings(plan.answers, PLAN_TEMPLATES.length);
-  const rolePayload = packRolesForShare(plan.roles);
-  if (answerPayload) planPayload.a = answerPayload;
-  if (rolePayload) planPayload.r = rolePayload;
+  const title = typeof plan.title === 'string' ? plan.title : '';
+  const itemPayload = packRowForShare(plan.items, itemCount);
+  if (title) planPayload.t = title;
+  if (itemPayload) planPayload.i = itemPayload;
+  if (itemCount !== DEFAULT_PLAN_ITEM_COUNT) planPayload.c = itemCount;
   if (hasObjectKeys(planPayload)) packed.p = planPayload;
 
-  const width = getShareOptionCount(survey.options) + 2;
   const tablePayload = {};
-  const headerPayload = packRowForShare(fitHeaderRow(table.headerRow, width), width);
-  const rowPayload = packRowsForShare(table.rows, width);
+  const headerPayload = packRowForShare(table.headerRow, tableWidth);
+  const rowPayload = packRowsForShare(table.rows, tableWidth);
   if (headerPayload) tablePayload.h = headerPayload;
   if (rowPayload) {
     if (rowPayload.length === 1) {
@@ -1764,58 +1557,6 @@ function packShareState(state) {
 
 function isDefaultShareState(packed) {
   return packed && Object.keys(packed).length === 1 && packed.v === SHARE_VERSION;
-}
-
-function packOptionsForShare(options) {
-  const count = getShareOptionCount(options);
-  let changed = count !== 3;
-  const entries = Array.from({ length: count }, (_, index) => {
-    const option = Array.isArray(options) ? options[index] : null;
-    const label = option && typeof option.label === 'string' ? option.label : '';
-    const defaultColor = ITEM_COLORS[index % ITEM_COLORS.length];
-    const color = option && option.color ? option.color : defaultColor;
-    if (label || color !== defaultColor) changed = true;
-    return color === defaultColor ? (label || null) : [label, encodeColorForShare(color, ITEM_COLORS)];
-  });
-  return changed ? entries : null;
-}
-
-function getShareOptionCount(options) {
-  return Array.isArray(options) && options.length ? clamp(options.length, 2, 8) : 3;
-}
-
-function encodeStickersForShare(stickers, options) {
-  if (!Array.isArray(stickers) || !stickers.length || !Array.isArray(options)) return '';
-  const optionIndexById = new Map(options.map((option, index) => [option.id, index]));
-  return stickers
-    .map((sticker) => {
-      const optionIndex = optionIndexById.get(sticker.optionId);
-      if (!Number.isInteger(optionIndex)) return '';
-      return `${optionIndex.toString(36)}${toBase36(quantizePercent(sticker.x), 2)}${toBase36(quantizePercent(sticker.y), 2)}`;
-    })
-    .join('');
-}
-
-function packIndexedStrings(values, length) {
-  if (!Array.isArray(values)) return null;
-  const packed = {};
-  for (let index = 0; index < length; index += 1) {
-    if (typeof values[index] === 'string' && values[index]) packed[index.toString(36)] = values[index];
-  }
-  return hasObjectKeys(packed) ? packed : null;
-}
-
-function packRolesForShare(roles) {
-  if (!Array.isArray(roles)) return null;
-  const packed = {};
-  for (let index = 0; index < PLAN_TEMPLATES.length; index += 1) {
-    const role = roles[index];
-    const name = typeof role === 'string'
-      ? role
-      : (role && typeof role.name === 'string' ? role.name : '');
-    if (name) packed[index.toString(36)] = name;
-  }
-  return hasObjectKeys(packed) ? packed : null;
 }
 
 function packRowForShare(row, width) {
@@ -1888,116 +1629,23 @@ function packLabelsForShare(labels) {
 
 function unpackShareState(packed) {
   if (!packed || packed.v !== SHARE_VERSION) return null;
-  const surveyPayload = asPlainObject(packed.s);
-  const options = unpackOptionsForShare(surveyPayload.o);
-  const width = options.length + 2;
   const tablePayload = asPlainObject(packed.t);
   const planPayload = asPlainObject(packed.p);
-
-  const answers = unpackIndexedStrings(planPayload.a, PLAN_TEMPLATES.length);
+  const itemCount = normalizePlanItemCount(planPayload.c, getPlanItemCount(planPayload.i, tablePayload.h));
+  const tableWidth = itemCount + 1;
 
   return normalizeLoadedState({
-    survey: {
-      question: typeof surveyPayload.q === 'string' ? surveyPayload.q : '',
-      options,
-      stickers: decodeStickersForShare(surveyPayload.k, options)
-    },
     plan: {
-      answers,
-      roles: unpackRolesForShare(planPayload.r, answers)
+      title: typeof planPayload.t === 'string' ? planPayload.t : '',
+      items: unpackRowForShare(planPayload.i, itemCount)
     },
     table: {
-      headerRow: unpackRowForShare(tablePayload.h, width),
-      rows: unpackRowsForShare(tablePayload, width),
+      headerRow: unpackRowForShare(tablePayload.h, tableWidth),
+      rows: unpackRowsForShare(tablePayload, tableWidth),
       tableDefaultsCleared: true
     },
     graph: unpackGraphForShare(packed.g)
   });
-}
-
-function unpackRolesForShare(encoded, answers) {
-  const roles = Array(PLAN_TEMPLATES.length).fill('');
-  if (Array.isArray(encoded)) {
-    for (let index = 0; index < PLAN_TEMPLATES.length; index += 1) {
-      const role = encoded[index];
-      if (typeof role === 'string') {
-        roles[index] = role;
-      } else if (role && typeof role.name === 'string') {
-        roles[index] = role.name;
-      }
-    }
-    return normalizePlanRoles(roles, answers);
-  }
-
-  if (encoded && typeof encoded === 'object') {
-    Object.entries(encoded).forEach(([key, value]) => {
-      const index = Number.parseInt(key, 36);
-      if (index < 0 || index >= PLAN_TEMPLATES.length) return;
-      if (typeof value === 'string') {
-        roles[index] = value;
-      } else if (value && typeof value.name === 'string') {
-        roles[index] = value.name;
-      }
-    });
-  }
-  return normalizePlanRoles(roles, answers);
-}
-
-function unpackOptionsForShare(entries) {
-  const count = Array.isArray(entries) && entries.length ? clamp(entries.length, 2, 8) : 3;
-  return Array.from({ length: count }, (_, index) => {
-    const entry = Array.isArray(entries) ? entries[index] : null;
-    const defaultColor = ITEM_COLORS[index % ITEM_COLORS.length];
-    let label = '';
-    let color = defaultColor;
-
-    if (typeof entry === 'string') {
-      label = entry;
-    } else if (Array.isArray(entry)) {
-      label = typeof entry[0] === 'string' ? entry[0] : '';
-      color = decodeColorForShare(entry[1], ITEM_COLORS, defaultColor);
-    }
-
-    return {
-      id: makeId('option'),
-      label,
-      color
-    };
-  });
-}
-
-function decodeStickersForShare(token, options) {
-  if (typeof token !== 'string' || !token || !Array.isArray(options)) return [];
-  const stickers = [];
-  for (let index = 0; index + 4 < token.length; index += 5) {
-    const optionIndex = Number.parseInt(token[index], 36);
-    const x = Number.parseInt(token.slice(index + 1, index + 3), 36);
-    const y = Number.parseInt(token.slice(index + 3, index + 5), 36);
-    if (!options[optionIndex] || !Number.isFinite(x) || !Number.isFinite(y)) continue;
-    stickers.push({
-      id: makeId('sticker'),
-      optionId: options[optionIndex].id,
-      x: decodeQuantizedPercent(x),
-      y: decodeQuantizedPercent(y)
-    });
-  }
-  return stickers;
-}
-
-function unpackIndexedStrings(encoded, length) {
-  const values = Array(length).fill('');
-  if (Array.isArray(encoded)) {
-    for (let index = 0; index < length; index += 1) {
-      if (typeof encoded[index] === 'string') values[index] = encoded[index];
-    }
-    return values;
-  }
-  if (!encoded || typeof encoded !== 'object') return values;
-  Object.entries(encoded).forEach(([key, value]) => {
-    const index = Number.parseInt(key, 36);
-    if (index >= 0 && index < length && typeof value === 'string') values[index] = value;
-  });
-  return values;
 }
 
 function unpackRowForShare(encoded, width) {
