@@ -330,6 +330,7 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
     if (titleComplete) return 2;
     return 1;
   });
+  const [planMotion, setPlanMotion] = useState({ direction: 'forward', tick: 0 });
 
   useEffect(() => {
     setVisibleStep((currentStep) => {
@@ -337,12 +338,15 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
       if (!itemsComplete) return Math.min(currentStep, 2);
       return currentStep;
     });
-    setActiveStep((currentStep) => {
-      if (!titleComplete) return 1;
-      if (!itemsComplete && currentStep > 2) return 2;
-      return currentStep;
-    });
-  }, [titleComplete, itemsComplete]);
+    let nextStep = activeStep;
+    if (!titleComplete) nextStep = 1;
+    else if (!itemsComplete && activeStep > 2) nextStep = 2;
+
+    if (nextStep !== activeStep) {
+      queuePlanMotion(nextStep > activeStep ? 'forward' : 'back');
+      setActiveStep(nextStep);
+    }
+  }, [titleComplete, itemsComplete, activeStep]);
 
   useEffect(() => {
     if (!pendingScrollRef.current || !pendingScrollRef.current.current) return;
@@ -354,7 +358,12 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
     if (ref.current) ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  function queuePlanMotion(direction) {
+    setPlanMotion((motion) => ({ direction, tick: motion.tick + 1 }));
+  }
+
   function goToStep(step, ref) {
+    queuePlanMotion(step >= activeStep ? 'forward' : 'back');
     pendingScrollRef.current = ref;
     setActiveStep(step);
     setVisibleStep((currentStep) => Math.max(currentStep, step));
@@ -411,16 +420,19 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
 
   function addItem() {
     if (items.length >= MAX_PLAN_ITEM_COUNT) return;
+    queuePlanMotion('forward');
     syncItems(items.concat(''));
   }
 
   function removeItem(index) {
     if (items.length <= MIN_PLAN_ITEM_COUNT) return;
+    queuePlanMotion('back');
     syncItems(items.filter((_, itemIndex) => itemIndex !== index), index);
   }
 
   function chooseGraphType(type) {
     if (graph.type === type) return;
+    queuePlanMotion('select');
     onGraphChange({ type, dividers: [], fills: {} });
   }
 
@@ -428,52 +440,83 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
     return value && value.trim() ? value.trim() : fallback;
   }
 
+  function morphStepStyle(isActive) {
+    return { gridTemplateRows: isActive ? '0fr 1fr' : '44px 0fr' };
+  }
+
+  function morphSummaryStyle(isActive) {
+    return {
+      minHeight: isActive ? '0px' : '44px',
+      opacity: isActive ? 0 : 1,
+      transform: isActive ? 'translateY(6px) scale(1.012)' : 'translateY(0) scale(1)'
+    };
+  }
+
+  function morphContentStyle(isActive) {
+    return {
+      paddingTop: isActive ? '16px' : '0px',
+      paddingBottom: isActive ? '16px' : '0px',
+      opacity: isActive ? 1 : 0,
+      transform: isActive ? 'translateY(0) scale(1)' : 'translateY(-10px) scale(0.94)'
+    };
+  }
+
+  function morphStepKey(step) {
+    return activeStep === step && planMotion.direction === 'back' ? `step-${step}-back-${planMotion.tick}` : `step-${step}`;
+  }
+
+  function morphStepClass(step) {
+    const isActive = activeStep === step;
+    const isShrinkTarget = planMotion.direction === 'forward' && activeStep === step + 1;
+    return `panel-block plan-step plan-morph-step ${isActive ? 'is-active' : 'is-collapsed'} ${isShrinkTarget ? 'is-shrink-target' : ''}`;
+  }
+
+  const showStepFlow = activeStep < 4;
+  const itemSummary = items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ');
+
   return (
     <div className="plan-screen">
-      <div className="plan-flow">
-        {activeStep === 1 ? (
-          <section className="panel-block plan-step is-active" ref={titleRef}>
-            <div className="plan-step-head">
-              <span className="plan-step-index">1</span>
+      <div className={`plan-flow is-${planMotion.direction}`} data-motion-tick={planMotion.tick}>
+        {showStepFlow && (
+          <section key={morphStepKey(1)} className={morphStepClass(1)} ref={titleRef} style={morphStepStyle(activeStep === 1)}>
+            <div className="plan-summary-row plan-step-summary" aria-hidden={activeStep === 1} style={morphSummaryStyle(activeStep === 1)}>
               <PenLine size={18} aria-hidden="true" />
-              <span>제목 정하기</span>
+              <span className="plan-summary-value">{summaryText(title, '제목')}</span>
             </div>
-            <div className="plan-title-row">
-              <input
-                className="text-input plan-title-input"
-                value={title}
-                onChange={(event) => updateTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && titleComplete) goToStep(2, itemsRef);
-                }}
-                placeholder="제목"
-                aria-label="제목"
-              />
-              <button
-                className="plan-next-button"
-                type="button"
-                onClick={() => goToStep(2, itemsRef)}
-                onPointerDown={(event) => {
-                  if (!titleComplete) return;
-                  event.preventDefault();
-                  goToStep(2, itemsRef);
-                }}
-                onKeyDown={(event) => handleAdvanceKey(event, 2, itemsRef)}
-                disabled={!titleComplete}
-                title="다음"
-                aria-label="다음: 항목"
-              >
-                <span>다음</span>
-                <ChevronRight size={18} aria-hidden="true" />
-              </button>
+            <div className="plan-active-content" aria-hidden={activeStep !== 1} style={morphContentStyle(activeStep === 1)}>
+              <div className="plan-step-head">
+                <span className="plan-step-index">1</span>
+                <PenLine size={18} aria-hidden="true" />
+                <span>제목 정하기</span>
+              </div>
+              <div className="plan-title-row">
+                <input
+                  className="text-input plan-title-input"
+                  value={title}
+                  onChange={(event) => updateTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && titleComplete) goToStep(2, itemsRef);
+                  }}
+                  placeholder="제목"
+                  aria-label="제목"
+                  disabled={activeStep !== 1}
+                />
+                <button
+                  className="plan-next-button"
+                  type="button"
+                  onClick={() => goToStep(2, itemsRef)}
+                  onKeyDown={(event) => handleAdvanceKey(event, 2, itemsRef)}
+                  disabled={!titleComplete || activeStep !== 1}
+                  title="다음"
+                  aria-label="다음: 항목"
+                >
+                  <span>다음</span>
+                  <ChevronRight size={18} aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </section>
-        ) : activeStep < 4 ? (
-          <div className="plan-summary-row" ref={titleRef}>
-            <PenLine size={18} aria-hidden="true" />
-            <span>{summaryText(title, '제목')}</span>
-          </div>
-        ) : null}
+        )}
 
         {activeStep === 4 && visibleStep >= 4 && (
           <section className="panel-block plan-sheet-screen" ref={planSheetRef}>
@@ -487,7 +530,7 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
               <div className="plan-sheet-row">
                 <Table2 size={18} aria-hidden="true" />
                 <span>항목</span>
-                <strong>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</strong>
+                <strong>{itemSummary}</strong>
               </div>
               <div className="plan-sheet-row">
                 <PieChart size={18} aria-hidden="true" />
@@ -510,89 +553,92 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
           </section>
         )}
 
-        {activeStep === 2 && visibleStep >= 2 && (
-          <section className="panel-block plan-step is-active" ref={itemsRef}>
-            <div className="plan-step-head">
-              <span className="plan-step-index">2</span>
+        {showStepFlow && activeStep >= 2 && visibleStep >= 2 && (
+          <section key={morphStepKey(2)} className={morphStepClass(2)} ref={itemsRef} style={morphStepStyle(activeStep === 2)}>
+            <div className="plan-summary-row plan-step-summary" aria-hidden={activeStep === 2} style={morphSummaryStyle(activeStep === 2)}>
               <Table2 size={18} aria-hidden="true" />
-              <span>표의 항목 정하기</span>
+              <span className="plan-summary-value">{itemSummary}</span>
             </div>
-            <div className="plan-items-grid">
-              {items.map((item, index) => (
-                <div className="plan-item-control" key={index}>
-                  <input
-                    className="text-input compact plan-item-input"
-                    value={item}
-                    onChange={(event) => updateItem(index, event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && itemsComplete) goToStep(3, graphRef);
-                    }}
-                    placeholder={`항목 ${index + 1}`}
-                    aria-label={`항목 ${index + 1}`}
-                  />
-                  <button
-                    className="icon-button plan-item-delete-button"
-                    type="button"
-                    onClick={() => removeItem(index)}
-                    disabled={items.length <= MIN_PLAN_ITEM_COUNT}
-                    title="항목 삭제"
-                    aria-label={`항목 ${index + 1} 삭제`}
-                  >
-                    <Trash2 size={16} aria-hidden="true" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="plan-item-actions">
-              <button
-                className="plan-previous-button"
-                type="button"
-                onClick={() => goToStep(1, titleRef)}
-                title="이전"
-                aria-label="이전: 제목"
-              >
-                <ChevronLeft size={18} aria-hidden="true" />
-                <span>이전</span>
-              </button>
-              <button
-                className="plan-add-button"
-                type="button"
-                onClick={addItem}
-                disabled={items.length >= MAX_PLAN_ITEM_COUNT}
-                title="항목 추가"
-                aria-label="항목 추가"
-              >
-                <Plus size={17} aria-hidden="true" />
-                <span>항목</span>
-              </button>
-              <button
-                className="plan-next-button"
-                type="button"
-                onClick={() => goToStep(3, graphRef)}
-                onPointerDown={(event) => {
-                  if (!itemsComplete) return;
-                  event.preventDefault();
-                  goToStep(3, graphRef);
-                }}
-                onKeyDown={(event) => handleAdvanceKey(event, 3, graphRef)}
-                disabled={!itemsComplete}
-                title="다음"
-                aria-label="다음: 그래프"
-              >
-                <span>다음</span>
-                <ChevronRight size={18} aria-hidden="true" />
-              </button>
+            <div className="plan-active-content" aria-hidden={activeStep !== 2} style={morphContentStyle(activeStep === 2)}>
+              <div className="plan-step-head">
+                <span className="plan-step-index">2</span>
+                <Table2 size={18} aria-hidden="true" />
+                <span>표의 항목 정하기</span>
+              </div>
+              <div className="plan-items-grid">
+                {items.map((item, index) => (
+                  <div className="plan-item-control" key={index}>
+                    <input
+                      className="text-input compact plan-item-input"
+                      value={item}
+                      onChange={(event) => updateItem(index, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && itemsComplete) goToStep(3, graphRef);
+                      }}
+                      placeholder={`항목 ${index + 1}`}
+                      aria-label={`항목 ${index + 1}`}
+                      disabled={activeStep !== 2}
+                    />
+                    <button
+                      className="icon-button plan-item-delete-button"
+                      type="button"
+                      onClick={() => removeItem(index)}
+                      disabled={items.length <= MIN_PLAN_ITEM_COUNT || activeStep !== 2}
+                      title="항목 삭제"
+                      aria-label={`항목 ${index + 1} 삭제`}
+                    >
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="plan-item-actions">
+                <button
+                  className="plan-previous-button"
+                  type="button"
+                  onClick={() => goToStep(1, titleRef)}
+                  disabled={activeStep !== 2}
+                  title="이전"
+                  aria-label="이전: 제목"
+                >
+                  <ChevronLeft size={18} aria-hidden="true" />
+                  <span>이전</span>
+                </button>
+                <button
+                  className="plan-add-button"
+                  type="button"
+                  onClick={addItem}
+                  disabled={items.length >= MAX_PLAN_ITEM_COUNT || activeStep !== 2}
+                  title="항목 추가"
+                  aria-label="항목 추가"
+                >
+                  <Plus size={17} aria-hidden="true" />
+                  <span>항목</span>
+                </button>
+                <button
+                  className="plan-next-button"
+                  type="button"
+                  onClick={() => goToStep(3, graphRef)}
+                  onKeyDown={(event) => handleAdvanceKey(event, 3, graphRef)}
+                  disabled={!itemsComplete || activeStep !== 2}
+                  title="다음"
+                  aria-label="다음: 그래프"
+                >
+                  <span>다음</span>
+                  <ChevronRight size={18} aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </section>
         )}
 
-        {activeStep === 3 && visibleStep >= 3 && (
-          <>
-            <div className="plan-summary-row" ref={itemsRef}>
-              <Table2 size={18} aria-hidden="true" />
-              <span>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</span>
+        {showStepFlow && activeStep >= 3 && visibleStep >= 3 && (
+          <section key={morphStepKey(3)} className={morphStepClass(3)} ref={graphRef} style={morphStepStyle(activeStep === 3)}>
+            <div className="plan-summary-row plan-step-summary" aria-hidden={activeStep === 3} style={morphSummaryStyle(activeStep === 3)}>
+              <PieChart size={18} aria-hidden="true" />
+              <span className="plan-summary-value">{graphTypeLabel}</span>
             </div>
-            <section className="panel-block plan-step is-active" ref={graphRef}>
+            <div className="plan-active-content" aria-hidden={activeStep !== 3} style={morphContentStyle(activeStep === 3)}>
               <div className="plan-step-head">
                 <span className="plan-step-index">3</span>
                 <PieChart size={18} aria-hidden="true" />
@@ -604,6 +650,7 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
                   type="button"
                   onClick={() => chooseGraphType('bar')}
                   aria-pressed={graph.type === 'bar'}
+                  disabled={activeStep !== 3}
                 >
                   <Grid3X3 size={18} aria-hidden="true" />
                   <span>띠그래프</span>
@@ -613,6 +660,7 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
                   type="button"
                   onClick={() => chooseGraphType('pie')}
                   aria-pressed={graph.type === 'pie'}
+                  disabled={activeStep !== 3}
                 >
                   <Circle size={18} aria-hidden="true" />
                   <span>원그래프</span>
@@ -623,6 +671,7 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
                   className="plan-previous-button"
                   type="button"
                   onClick={() => goToStep(2, itemsRef)}
+                  disabled={activeStep !== 3}
                   title="이전"
                   aria-label="이전: 항목"
                 >
@@ -633,11 +682,8 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
                   className="plan-next-button"
                   type="button"
                   onClick={() => goToStep(4, planSheetRef)}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    goToStep(4, planSheetRef);
-                  }}
                   onKeyDown={(event) => handleAdvanceKey(event, 4, planSheetRef)}
+                  disabled={activeStep !== 3}
                   title="다음"
                   aria-label="다음: 자료 정리 계획서"
                 >
@@ -645,8 +691,8 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
                   <ChevronRight size={18} aria-hidden="true" />
                 </button>
               </div>
-            </section>
-          </>
+            </div>
+          </section>
         )}
       </div>
     </div>

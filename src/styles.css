@@ -11,6 +11,8 @@
   --mustard: #f7b731;
   --blue: #4d96ff;
   --shadow: 0 14px 30px rgba(31, 45, 61, 0.10);
+  --spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --spring-pop: cubic-bezier(0.22, 1.18, 0.36, 1);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--page);
@@ -98,7 +100,7 @@ h1 {
   cursor: pointer;
   padding: 0 10px;
   box-shadow: none;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  transition: background-color 180ms var(--spring), border-color 180ms var(--spring), color 180ms var(--spring), box-shadow 180ms var(--spring), transform 180ms var(--spring);
 }
 
 .tab-button svg {
@@ -112,7 +114,11 @@ h1 {
   box-shadow:
     inset 1px 1px 3px rgba(31, 45, 61, 0.08),
     0 2px 8px rgba(31, 45, 61, 0.05);
-  transform: none;
+  animation: tabSettle 260ms var(--spring-pop) both;
+}
+
+.tab-button:active {
+  transform: scale(0.985);
 }
 
 .stage {
@@ -120,17 +126,33 @@ h1 {
 }
 
 .tab-panel {
-  animation: panelIn 260ms ease both;
+  animation: panelIn 320ms var(--spring) both;
 }
 
 @keyframes panelIn {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(8px) scale(0.992);
+  }
+  68% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.002);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes tabSettle {
+  from {
+    transform: scale(0.965);
+  }
+  68% {
+    transform: scale(1.018);
+  }
+  to {
+    transform: scale(1);
   }
 }
 
@@ -316,16 +338,90 @@ textarea.text-input:focus {
   grid-gap: 12px;
   max-width: 880px;
   margin: 0 auto;
+  --plan-slide: 14px;
+  --plan-settle: -2px;
+}
+
+.plan-flow.is-back {
+  --plan-slide: -12px;
+  --plan-settle: 1px;
+}
+
+.plan-flow.is-select {
+  --plan-slide: 0px;
+  --plan-settle: 0px;
 }
 
 .plan-step {
   scroll-margin-top: 12px;
-  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+  transform-origin: 50% 0;
+  transition: border-color 220ms var(--spring), background-color 220ms var(--spring), box-shadow 220ms var(--spring), transform 260ms var(--spring);
 }
 
 .plan-step.is-active {
   border-color: rgba(43, 179, 163, 0.5);
   background: #ffffff;
+}
+
+.plan-morph-step {
+  display: grid;
+  grid-template-rows: 0fr 1fr;
+  padding: 0;
+  overflow: hidden;
+  will-change: grid-template-rows, transform;
+  transition: grid-template-rows 380ms var(--spring), border-color 220ms var(--spring), background-color 220ms var(--spring), box-shadow 260ms var(--spring), transform 320ms var(--spring);
+}
+
+.plan-morph-step.is-active {
+  grid-template-rows: 0fr 1fr;
+  border-color: rgba(43, 179, 163, 0.5);
+  background: #ffffff;
+}
+
+.plan-morph-step.is-collapsed {
+  grid-template-rows: 44px 0fr;
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 6px 14px rgba(31, 45, 61, 0.05);
+  transform: scale(0.998);
+}
+
+.plan-active-content {
+  overflow: hidden;
+  min-height: 0;
+  padding: 16px;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: 50% 0;
+  transition: padding 360ms var(--spring), opacity 220ms ease, transform 360ms var(--spring);
+}
+
+.plan-morph-step.is-collapsed .plan-active-content {
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translateY(-10px) scale(0.94);
+  pointer-events: none;
+}
+
+.plan-step-summary {
+  min-height: 44px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  animation: none;
+  transition: min-height 340ms var(--spring), opacity 140ms ease, transform 320ms var(--spring);
+}
+
+.plan-morph-step.is-active .plan-step-summary {
+  min-height: 0;
+  opacity: 0;
+  transform: translateY(6px) scale(1.012);
+  pointer-events: none;
 }
 
 .plan-step.is-locked {
@@ -348,6 +444,7 @@ textarea.text-input:focus {
   color: var(--ink);
   font-weight: 800;
   box-shadow: 0 6px 14px rgba(31, 45, 61, 0.05);
+  animation: planSummaryIn 280ms var(--spring) both;
 }
 
 .plan-summary-row svg {
@@ -361,6 +458,62 @@ textarea.text-input:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.plan-summary-value {
+  display: inline-block;
+  transform-origin: left center;
+  will-change: transform, opacity;
+}
+
+.plan-morph-step.is-shrink-target .plan-summary-value {
+  animation: planValueShrinkIn 430ms var(--spring) both;
+}
+
+.plan-morph-step.is-shrink-target .plan-step-summary svg {
+  animation: planIconShrinkIn 360ms var(--spring) both;
+}
+
+.plan-step.plan-morph-step.is-active {
+  grid-template-rows: 0fr 1fr;
+}
+
+.plan-step.plan-morph-step.is-collapsed {
+  grid-template-rows: 44px 0fr;
+}
+
+.plan-step.plan-morph-step > .plan-step-summary {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+}
+
+.plan-step.plan-morph-step.is-active > .plan-step-summary {
+  min-height: 0;
+  opacity: 0;
+  transform: translateY(6px) scale(1.012);
+  pointer-events: none;
+}
+
+.plan-step.plan-morph-step.is-active > .plan-active-content {
+  padding: 16px;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.plan-step.plan-morph-step.is-collapsed > .plan-step-summary {
+  min-height: 44px;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.plan-step.plan-morph-step.is-collapsed > .plan-active-content {
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translateY(-10px) scale(0.94);
+  pointer-events: none;
 }
 
 .plan-step-head {
@@ -422,7 +575,7 @@ textarea.text-input:focus {
   color: var(--teal-dark);
   cursor: pointer;
   font-weight: 800;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+  transition: background-color 170ms var(--spring), border-color 170ms var(--spring), color 170ms var(--spring), transform 170ms var(--spring), box-shadow 170ms var(--spring);
 }
 
 .plan-previous-button {
@@ -434,6 +587,14 @@ textarea.text-input:focus {
   border-color: var(--teal);
   background: #eaf7f5;
   transform: translateY(-1px);
+}
+
+.plan-next-button:active,
+.plan-previous-button:active,
+.plan-add-button:active,
+.plan-graph-button:active,
+.plan-item-delete-button:active {
+  transform: scale(0.972);
 }
 
 .plan-next-button:disabled,
@@ -461,7 +622,16 @@ textarea.text-input:focus {
   grid-template-columns: minmax(0, 1fr) 38px;
   grid-gap: 6px;
   align-items: start;
+  animation: planItemIn 300ms var(--spring-pop) both;
 }
+
+.plan-item-control:nth-child(2) { animation-delay: 22ms; }
+.plan-item-control:nth-child(3) { animation-delay: 44ms; }
+.plan-item-control:nth-child(4) { animation-delay: 66ms; }
+.plan-item-control:nth-child(5) { animation-delay: 88ms; }
+.plan-item-control:nth-child(6) { animation-delay: 110ms; }
+.plan-item-control:nth-child(7) { animation-delay: 132ms; }
+.plan-item-control:nth-child(8) { animation-delay: 154ms; }
 
 .plan-item-input {
   text-align: center;
@@ -495,7 +665,7 @@ textarea.text-input:focus {
   color: var(--ink);
   cursor: pointer;
   font-weight: 800;
-  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease, opacity 160ms ease;
+  transition: background-color 170ms var(--spring), border-color 170ms var(--spring), transform 170ms var(--spring), opacity 170ms var(--spring), box-shadow 170ms var(--spring);
 }
 
 .plan-add-button:hover {
@@ -534,7 +704,7 @@ textarea.text-input:focus {
   color: var(--ink);
   cursor: pointer;
   font-weight: 800;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition: background-color 170ms var(--spring), border-color 170ms var(--spring), color 170ms var(--spring), box-shadow 170ms var(--spring), transform 170ms var(--spring);
 }
 
 .plan-graph-button:hover {
@@ -546,6 +716,7 @@ textarea.text-input:focus {
   background: #eaf7f5;
   color: var(--teal-dark);
   box-shadow: inset 0 0 0 1px rgba(43, 179, 163, 0.2);
+  animation: choicePop 300ms var(--spring-pop) both;
 }
 
 .plan-graph-button:disabled {
@@ -563,6 +734,8 @@ textarea.text-input:focus {
 
 .plan-sheet-screen {
   scroll-margin-top: 12px;
+  transform-origin: 50% 0;
+  animation: planStepIn 380ms var(--spring) both;
 }
 
 .plan-sheet-title {
@@ -587,7 +760,11 @@ textarea.text-input:focus {
   align-items: center;
   padding: 0 12px;
   background: #ffffff;
+  animation: planItemIn 300ms var(--spring-pop) both;
 }
+
+.plan-sheet-row:nth-child(2) { animation-delay: 45ms; }
+.plan-sheet-row:nth-child(3) { animation-delay: 90ms; }
 
 .plan-sheet-row svg {
   color: var(--teal-dark);
@@ -605,6 +782,116 @@ textarea.text-input:focus {
   white-space: nowrap;
   color: var(--ink);
   font-weight: 900;
+}
+
+@keyframes planStepIn {
+  from {
+    opacity: 0.96;
+    transform: translateY(calc(var(--plan-slide) * 0.35)) scale(0.988);
+  }
+  68% {
+    opacity: 1;
+    transform: translateY(var(--plan-settle)) scale(1.004);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes planSummaryIn {
+  from {
+    opacity: 0.96;
+    transform: translateY(calc(var(--plan-slide) * 0.25)) scale(0.99);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(calc(var(--plan-settle) * 0.5)) scale(1.002);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes planValueShrinkIn {
+  from {
+    opacity: 0.98;
+    transform: translateY(15px) scale(1.16);
+  }
+  68% {
+    opacity: 1;
+    transform: translateY(-1px) scale(0.982);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes planIconShrinkIn {
+  from {
+    opacity: 0.86;
+    transform: translateY(10px) scale(1.08);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-1px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes planCardSettle {
+  from {
+    transform: translateY(5px) scale(0.992);
+  }
+  70% {
+    transform: translateY(-1px) scale(1.003);
+  }
+  to {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes planChildIn {
+  from {
+    opacity: 0.96;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes planItemIn {
+  from {
+    opacity: 0.94;
+    transform: translateY(5px) scale(0.985);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.006);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes choicePop {
+  from {
+    transform: scale(0.965);
+  }
+  68% {
+    transform: scale(1.018);
+  }
+  to {
+    transform: scale(1);
+  }
 }
 
 .plan-title-input:disabled,
