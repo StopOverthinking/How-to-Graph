@@ -56,8 +56,28 @@ const GRAPH_COLORS = [
   '#00b4d8',
   '#8d6e63'
 ];
-const BAR_PERCENT_LABEL_TICKS = [0, 25, 50, 75, 100];
-const PIE_PERCENT_LABEL_TICKS = [0, 25, 50, 75];
+const LABEL_TICK_STEPS_BY_SCALE = {
+  1: 20,
+  2: 20,
+  3: 15,
+  4: 20,
+  5: 25,
+  6: 18,
+  7: 21,
+  8: 24,
+  9: 27,
+  10: 20,
+  11: 22,
+  12: 24,
+  13: 26,
+  14: 28,
+  15: 30,
+  16: 32,
+  17: 34,
+  18: 36,
+  19: 38,
+  20: 40
+};
 const LABEL_COLORS = ['#1f2d3d', '#ffffff'];
 const DEFAULT_LABEL_WIDTH = 88;
 const MIN_LABEL_WIDTH = 40;
@@ -1608,7 +1628,8 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
 
 function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
   const scale = normalizeGraphScale(graph.scale);
-  const minorTicks = makeGraphTicks(scale, true).filter((tick) => !BAR_PERCENT_LABEL_TICKS.includes(tick));
+  const labelTicks = makePercentLabelTicks(scale, 'bar');
+  const minorTicks = makeGraphTicks(scale, true).filter((tick) => !labelTicks.includes(tick));
   const box = BAR_GRAPH_BOX;
   const barRadius = 2.2;
   return (
@@ -1652,7 +1673,7 @@ function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
           <line className="graph-minor-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top + box.height + 0.7} y2={box.top + box.height + 2.8} />
         </g>
       ))}
-      {BAR_PERCENT_LABEL_TICKS.map((tick) => (
+      {labelTicks.map((tick) => (
         <g key={`label-${tick}`}>
           <line className="graph-major-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top - 3.6} y2={box.top - 0.6} />
           <line className="graph-major-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top + box.height + 0.6} y2={box.top + box.height + 4.2} />
@@ -1675,7 +1696,8 @@ function barPercentX(percent) {
 
 function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
   const scale = normalizeGraphScale(graph.scale);
-  const minorTicks = makeGraphTicks(scale).filter((tick) => !PIE_PERCENT_LABEL_TICKS.includes(tick));
+  const labelTicks = makePercentLabelTicks(scale, 'pie');
+  const minorTicks = makeGraphTicks(scale).filter((tick) => !labelTicks.includes(tick));
   return (
     <svg className="pie-svg" viewBox="0 0 100 100" aria-hidden="true">
       <circle cx="50" cy="50" r="38" fill="#ffffff" stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
@@ -1694,6 +1716,7 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
         return <path key={`preview-${segment.key}`} className="graph-preview-segment" d={sectorPath(50, 50, 38, segment.start, segment.end)} fill="none" />;
       })}
       <circle cx="50" cy="50" r="38" fill="none" stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
+      <line className="pie-zero-divider" x1="50" y1="50" x2={polarPoint(50, 50, 38, 0).x} y2={polarPoint(50, 50, 38, 0).y} stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
       {minorTicks.map((tick) => {
         const inner = polarPoint(50, 50, 39.2, tick);
         const outer = polarPoint(50, 50, 42, tick);
@@ -1703,7 +1726,7 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
           </g>
         );
       })}
-      {PIE_PERCENT_LABEL_TICKS.map((tick) => {
+      {labelTicks.map((tick) => {
         const inner = polarPoint(50, 50, 38.9, tick);
         const outer = polarPoint(50, 50, 43, tick);
         const label = getPieTickLabelPosition(tick);
@@ -1884,6 +1907,15 @@ function makeGraphTicks(scale, includeEnd = false) {
   const ticks = [];
   for (let value = 0; value < 100; value += safeScale) ticks.push(value);
   if (includeEnd && ticks[ticks.length - 1] !== 100) ticks.push(100);
+  return ticks;
+}
+
+function makePercentLabelTicks(scale, graphType) {
+  const safeScale = normalizeGraphScale(scale);
+  const labelStep = LABEL_TICK_STEPS_BY_SCALE[safeScale] || LABEL_TICK_STEPS_BY_SCALE[DEFAULT_GRAPH_SCALE];
+  const ticks = [];
+  for (let value = 0; value < 100; value += labelStep) ticks.push(value);
+  if (graphType === 'bar' && ticks[ticks.length - 1] !== 100) ticks.push(100);
   return ticks;
 }
 
