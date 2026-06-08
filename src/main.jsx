@@ -8,6 +8,7 @@ import {
   decompressFromUint8Array
 } from 'lz-string';
 import {
+  ALargeSmall,
   Brush,
   ChevronLeft,
   ChevronRight,
@@ -41,7 +42,20 @@ const MIN_PLAN_ITEM_COUNT = 1;
 const MAX_PLAN_ITEM_COUNT = 8;
 const MIN_PLAN_STEP = 1;
 const MAX_PLAN_STEP = 4;
-const GRAPH_COLORS = ['#5ac8a8', '#ffb84d', '#ff6b6b', '#4d96ff', '#9b6bff', '#7bd389', '#f78fb3', '#6c7a89'];
+const GRAPH_COLORS = [
+  '#5ac8a8',
+  '#ffb84d',
+  '#ff6b6b',
+  '#4d96ff',
+  '#9b6bff',
+  '#7bd389',
+  '#f78fb3',
+  '#6c7a89',
+  '#f25f5c',
+  '#ffe066',
+  '#00b4d8',
+  '#8d6e63'
+];
 const BAR_PERCENT_LABEL_TICKS = [0, 25, 50, 75, 100];
 const PIE_PERCENT_LABEL_TICKS = [0, 25, 50, 75];
 const LABEL_COLORS = ['#1f2d3d', '#ffffff'];
@@ -1032,7 +1046,6 @@ function GraphScaleControl({ scale, onConfirm }) {
 function GraphWorkspace({ plan, table, graph, onChange }) {
   const canvasRef = useRef(null);
   const segments = getSegments(graph.dividers);
-  const dividerTicks = useMemo(() => makeDividerTicks(graph.scale), [graph.scale]);
   const coloredSegmentCount = getColoredSegmentCount(segments, graph.fills);
 
   function setGraph(patch) {
@@ -1071,14 +1084,6 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
         color: LABEL_COLORS[0]
       })
     }));
-  }
-
-  function toggleDivider(value) {
-    const hasDivider = graph.dividers.indexOf(value) !== -1;
-    const dividers = hasDivider
-      ? graph.dividers.filter((divider) => divider !== value)
-      : sanitizeDividers(graph.dividers.concat(value));
-    setGraph({ dividers });
   }
 
   function undoDivider() {
@@ -1141,16 +1146,6 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
 
       <div className="workspace-grid graph-layout">
         <aside className="tool-rail">
-          <SectionTitle icon={PieChart} title="그래프 틀" />
-          <SegmentedControl
-            value={graph.type}
-            onChange={(value) => setGraph({ type: value, dividers: [], fills: {} })}
-            items={[
-              { value: 'bar', label: '띠그래프', icon: Grid3X3 },
-              { value: 'pie', label: '원그래프', icon: Circle }
-            ]}
-          />
-
           <GraphScaleControl
             scale={graph.scale}
             onConfirm={(nextScale) => {
@@ -1167,7 +1162,7 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
             items={[
               { value: 'divide', label: '나누기', icon: PenLine },
               { value: 'paint', label: '색칠', icon: Brush },
-              { value: 'text', label: '글자', icon: PenLine }
+              { value: 'text', label: '글자', icon: ALargeSmall }
             ]}
           />
 
@@ -1187,9 +1182,6 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
           <GraphManualPanel
             graph={graph}
             segments={segments}
-            dividerTicks={dividerTicks}
-            coloredSegmentCount={coloredSegmentCount}
-            onToggleDivider={toggleDivider}
             onFillSegment={fillSegment}
             onClearSegment={clearSegment}
           />
@@ -1245,29 +1237,9 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
   );
 }
 
-function GraphManualPanel({ graph, segments, dividerTicks, coloredSegmentCount, onToggleDivider, onFillSegment, onClearSegment }) {
+function GraphManualPanel({ graph, segments, onFillSegment, onClearSegment }) {
   return (
     <div className="graph-manual-panel">
-      <div className="graph-count-row" aria-live="polite">
-        <span>선 {graph.dividers.length}</span>
-        <span>구간 {segments.length}</span>
-        <span>색 {coloredSegmentCount}</span>
-      </div>
-
-      <div className="divider-chip-grid" aria-label="눈금선 직접 나누기">
-        {dividerTicks.map((value) => (
-          <button
-            key={value}
-            type="button"
-            className={graph.dividers.indexOf(value) !== -1 ? 'is-active' : ''}
-            onClick={() => onToggleDivider(value)}
-            aria-pressed={graph.dividers.indexOf(value) !== -1}
-          >
-            {value}
-          </button>
-        ))}
-      </div>
-
       <div className="graph-segment-list" aria-label="구간 직접 색칠하기">
         {segments.map((segment) => {
           const color = graph.fills[segment.key];
@@ -1346,6 +1318,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (target.closest('.graph-label-frame')) return;
+      if (target.closest('.graph-canvas')) return;
       releaseLabelSelection();
     }
 
@@ -1360,6 +1333,8 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
 
   function releaseLabelSelection(nextLabelId = null) {
     if (selectedLabelId && selectedLabelId !== nextLabelId) {
+      const input = labelInputRefs.current.get(selectedLabelId);
+      if (input && document.activeElement === input) input.blur();
       removeLabelIfEmpty(selectedLabelId);
     }
     setSelectedLabelId(nextLabelId);
@@ -1688,7 +1663,7 @@ function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
         <line className="graph-preview-line" x1={barPercentX(previewDivider)} x2={barPercentX(previewDivider)} y1={box.top - 1.4} y2={box.top + box.height + 1.4} />
       )}
       {graph.dividers.map((divider) => (
-        <line key={divider} x1={barPercentX(divider)} x2={barPercentX(divider)} y1={box.top} y2={box.top + box.height} stroke="#1f2d3d" strokeWidth="1.05" />
+        <line key={divider} x1={barPercentX(divider)} x2={barPercentX(divider)} y1={box.top} y2={box.top + box.height} stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
       ))}
     </svg>
   );
@@ -1703,7 +1678,7 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
   const minorTicks = makeGraphTicks(scale).filter((tick) => !PIE_PERCENT_LABEL_TICKS.includes(tick));
   return (
     <svg className="pie-svg" viewBox="0 0 100 100" aria-hidden="true">
-      <circle cx="50" cy="50" r="38" fill="#ffffff" stroke="#1f2d3d" strokeWidth="1.15" />
+      <circle cx="50" cy="50" r="38" fill="#ffffff" stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
       {segments.map((segment) => {
         const color = graph.fills[segment.key] || 'rgba(255,255,255,0)';
         if (segment.start === 0 && segment.end === 100) {
@@ -1718,7 +1693,7 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
         }
         return <path key={`preview-${segment.key}`} className="graph-preview-segment" d={sectorPath(50, 50, 38, segment.start, segment.end)} fill="none" />;
       })}
-      <circle cx="50" cy="50" r="38" fill="none" stroke="#1f2d3d" strokeWidth="1.15" />
+      <circle cx="50" cy="50" r="38" fill="none" stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
       {minorTicks.map((tick) => {
         const inner = polarPoint(50, 50, 39.2, tick);
         const outer = polarPoint(50, 50, 42, tick);
@@ -1744,7 +1719,7 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
       )}
       {graph.dividers.map((divider) => {
         const point = polarPoint(50, 50, 38, divider);
-        return <line key={divider} x1="50" y1="50" x2={point.x} y2={point.y} stroke="#1f2d3d" strokeWidth="1.15" />;
+        return <line key={divider} x1="50" y1="50" x2={point.x} y2={point.y} stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />;
       })}
     </svg>
   );
@@ -1909,13 +1884,6 @@ function makeGraphTicks(scale, includeEnd = false) {
   const ticks = [];
   for (let value = 0; value < 100; value += safeScale) ticks.push(value);
   if (includeEnd && ticks[ticks.length - 1] !== 100) ticks.push(100);
-  return ticks;
-}
-
-function makeDividerTicks(scale) {
-  const safeScale = normalizeGraphScale(scale);
-  const ticks = [];
-  for (let value = safeScale; value < 100; value += safeScale) ticks.push(value);
   return ticks;
 }
 
