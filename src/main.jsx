@@ -15,7 +15,10 @@ import {
   Download,
   Eraser,
   Grid3X3,
+  Maximize2,
+  Megaphone,
   MousePointer2,
+  Move,
   PenLine,
   PieChart,
   Plus,
@@ -36,9 +39,25 @@ const TABS = [
 const DEFAULT_PLAN_ITEM_COUNT = 4;
 const MIN_PLAN_ITEM_COUNT = 1;
 const MAX_PLAN_ITEM_COUNT = 8;
+const MIN_PLAN_STEP = 1;
+const MAX_PLAN_STEP = 4;
 const GRAPH_COLORS = ['#5ac8a8', '#ffb84d', '#ff6b6b', '#4d96ff', '#9b6bff', '#7bd389', '#f78fb3', '#6c7a89'];
+const BAR_PERCENT_LABEL_TICKS = [0, 25, 50, 75, 100];
+const PIE_PERCENT_LABEL_TICKS = [0, 25, 50, 75];
+const LABEL_COLORS = ['#1f2d3d', '#ffffff'];
+const DEFAULT_LABEL_WIDTH = 88;
+const MIN_LABEL_WIDTH = 40;
+const MAX_LABEL_WIDTH = 640;
+const LABEL_AUTO_PADDING = 24;
+const DEFAULT_LABEL_FONT_SIZE = 20;
+const MIN_LABEL_FONT_SIZE = 12;
+const MAX_LABEL_FONT_SIZE = 34;
 const COUNT_ROW_LABEL = '인원(명)';
 const PERCENTAGE_ROW_LABEL = '백분율(%)';
+const TOTAL_COLUMN_LABEL = '합계';
+const DEFAULT_GRAPH_SCALE = 10;
+const MIN_GRAPH_SCALE = 1;
+const MAX_GRAPH_SCALE = 20;
 const SHARE_VERSION = 2;
 const SHARE_DEFAULT_TOKEN = '0';
 const SHARE_CHUNK_PREFIX = 'how-to-graph-share-parts:';
@@ -55,7 +74,8 @@ const QR_IMAGE_OPTIONS = {
 };
 const GRAPH_MODE_CODES = { divide: 'd', paint: 'p', text: 't' };
 const GRAPH_MODES_BY_CODE = { d: 'divide', p: 'paint', t: 'text' };
-const BAR_GRAPH_BOX = { left: 6, top: 18, width: 88, height: 24 };
+const BAR_GRAPH_VIEWBOX = { width: 100, height: 36 };
+const BAR_GRAPH_BOX = { left: 8, top: 10, width: 84, height: 14 };
 const PIE_GRAPH_CIRCLE = { cx: 50, cy: 50, radius: 38 };
 const chunkMemory = new Map();
 
@@ -72,13 +92,13 @@ function createDefaultState() {
       items: makeEmptyRow(DEFAULT_PLAN_ITEM_COUNT)
     },
     table: {
-      headerRow: makeEmptyRow(DEFAULT_PLAN_ITEM_COUNT + 1),
-      rows: fitRows([], DEFAULT_PLAN_ITEM_COUNT + 1),
+      headerRow: fitHeaderRow([], getTableWidthForItemCount(DEFAULT_PLAN_ITEM_COUNT)),
+      rows: fitRows([], getTableWidthForItemCount(DEFAULT_PLAN_ITEM_COUNT)),
       tableDefaultsCleared: true
     },
     graph: {
       type: 'bar',
-      scale: 10,
+      scale: DEFAULT_GRAPH_SCALE,
       mode: 'divide',
       activeColor: GRAPH_COLORS[0],
       dividers: [],
@@ -96,28 +116,29 @@ function normalizeLoadedState(raw) {
   const clearLegacyTableDefaults = table.tableDefaultsCleared !== true;
   const rawPlan = raw.plan && typeof raw.plan === 'object' ? raw.plan : {};
   const itemCount = getPlanItemCount(rawPlan.items, table.headerRow);
-  const tableWidth = itemCount + 1;
+  const tableWidth = getTableWidthForItemCount(itemCount);
   const headerRow = fitHeaderRow(table.headerRow, tableWidth, clearLegacyTableDefaults);
   const rows = fitRows(existingRows, tableWidth);
   const items = fitRow(rawPlan.items, itemCount);
   for (let index = 0; index < itemCount; index += 1) {
     if (!items[index] && headerRow[index + 1]) items[index] = headerRow[index + 1];
   }
+  const syncedHeaderRow = buildHeaderRow(items, headerRow, tableWidth);
 
   return {
     plan: {
       title: typeof rawPlan.title === 'string' ? rawPlan.title : (headerRow[0] || ''),
       items
     },
-    table: { headerRow, rows, tableDefaultsCleared: true },
+    table: { headerRow: syncedHeaderRow, rows, tableDefaultsCleared: true },
     graph: {
       type: raw.graph && raw.graph.type === 'pie' ? 'pie' : 'bar',
-      scale: raw.graph && raw.graph.scale ? raw.graph.scale : fallback.graph.scale,
+      scale: normalizeGraphScale(raw.graph && raw.graph.scale),
       mode: raw.graph && raw.graph.mode ? raw.graph.mode : fallback.graph.mode,
       activeColor: raw.graph && raw.graph.activeColor ? raw.graph.activeColor : fallback.graph.activeColor,
       dividers: raw.graph && Array.isArray(raw.graph.dividers) ? sanitizeDividers(raw.graph.dividers) : [],
       fills: raw.graph && raw.graph.fills ? raw.graph.fills : {},
-      labels: raw.graph && Array.isArray(raw.graph.labels) ? raw.graph.labels : []
+      labels: sanitizeLabels(raw.graph && raw.graph.labels)
     }
   };
 }
@@ -132,17 +153,49 @@ function normalizePlanItemCount(value, fallback = DEFAULT_PLAN_ITEM_COUNT) {
   return clamp(Math.round(count), MIN_PLAN_ITEM_COUNT, MAX_PLAN_ITEM_COUNT);
 }
 
+function normalizePlanStep(value, fallback = MIN_PLAN_STEP) {
+  const step = Number(value);
+  if (!Number.isFinite(step)) return fallback;
+  return clamp(Math.round(step), MIN_PLAN_STEP, MAX_PLAN_STEP);
+}
+
+function getPlanProgressStep(titleComplete, itemsComplete) {
+  if (!titleComplete) return 1;
+  if (!itemsComplete) return 2;
+  return 3;
+}
+
+function getPlanMaxStep(titleComplete, itemsComplete) {
+  if (!titleComplete) return 1;
+  if (!itemsComplete) return 2;
+  return MAX_PLAN_STEP;
+}
+
+function getAllowedPlanStep(step, titleComplete, itemsComplete) {
+  const progressStep = getPlanProgressStep(titleComplete, itemsComplete);
+  return Math.min(normalizePlanStep(step, progressStep), getPlanMaxStep(titleComplete, itemsComplete));
+}
+
 function getPlanItemCount(items, headerRow, fallback = DEFAULT_PLAN_ITEM_COUNT) {
   if (Array.isArray(items) && items.length) return normalizePlanItemCount(items.length, fallback);
-  if (Array.isArray(headerRow) && headerRow.length > 1) return normalizePlanItemCount(headerRow.length - 1, fallback);
+  if (Array.isArray(headerRow) && headerRow.length > 1) {
+    const hasTotalColumn = isTotalHeaderCell(headerRow[headerRow.length - 1]);
+    return normalizePlanItemCount(headerRow.length - (hasTotalColumn ? 2 : 1), fallback);
+  }
   return normalizePlanItemCount(fallback);
+}
+
+function getTableWidthForItemCount(itemCount) {
+  return normalizePlanItemCount(itemCount) + 2;
 }
 
 function getTableWidth(table) {
   const headerLength = table && Array.isArray(table.headerRow) ? table.headerRow.length : 0;
   const rowLength = table && Array.isArray(table.rows) && Array.isArray(table.rows[0]) ? table.rows[0].length : 0;
   const width = Math.max(headerLength, rowLength);
-  return width > 1 ? normalizePlanItemCount(width - 1) + 1 : DEFAULT_PLAN_ITEM_COUNT + 1;
+  if (width <= 1) return getTableWidthForItemCount(DEFAULT_PLAN_ITEM_COUNT);
+  const hasTotalColumn = table && Array.isArray(table.headerRow) && isTotalHeaderCell(table.headerRow[table.headerRow.length - 1]);
+  return getTableWidthForItemCount(width - (hasTotalColumn ? 2 : 1));
 }
 
 function fitHeaderRow(row, width, clearLegacyDefaults = false) {
@@ -155,7 +208,21 @@ function fitHeaderRow(row, width, clearLegacyDefaults = false) {
     }
   }
   next[0] = '';
+  next[width - 1] = TOTAL_COLUMN_LABEL;
   return next;
+}
+
+function buildHeaderRow(items, row, width) {
+  const headerRow = fitHeaderRow(row, width);
+  const itemCells = fitRow(items, Math.max(0, width - 2));
+  itemCells.forEach((item, index) => {
+    headerRow[index + 1] = item;
+  });
+  return headerRow;
+}
+
+function isTotalHeaderCell(value) {
+  return value === TOTAL_COLUMN_LABEL;
 }
 
 function fitRow(row, width) {
@@ -183,12 +250,105 @@ function getLegacyHeaderText(index, width) {
   return `항목${index}`;
 }
 
+function areRowsEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  return left.every((cell, index) => cell === right[index]);
+}
+
+function areTableRowsEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  return left.every((row, index) => areRowsEqual(row, right[index]));
+}
+
 function sanitizeDividers(dividers) {
   return dividers
     .map((value) => Number(value))
     .filter((value) => value > 0 && value < 100)
     .sort((a, b) => a - b)
     .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function normalizeLabelColor(value) {
+  return LABEL_COLORS.includes(value) ? value : LABEL_COLORS[0];
+}
+
+function normalizeLabelWidth(value) {
+  const width = Math.round(Number(value));
+  if (!Number.isFinite(width)) return DEFAULT_LABEL_WIDTH;
+  return clamp(width, MIN_LABEL_WIDTH, MAX_LABEL_WIDTH);
+}
+
+function measureLabelLineWidth(line, fontSize, inputElement) {
+  if (typeof document !== 'undefined') {
+    const canvas = measureLabelLineWidth.canvas || document.createElement('canvas');
+    measureLabelLineWidth.canvas = canvas;
+    const context = canvas.getContext('2d');
+    if (context) {
+      const computedStyle = inputElement && typeof window !== 'undefined'
+        ? window.getComputedStyle(inputElement)
+        : null;
+      const fontFamily = computedStyle && computedStyle.fontFamily
+        ? computedStyle.fontFamily
+        : 'system-ui, sans-serif';
+      context.font = `900 ${fontSize}px ${fontFamily}`;
+      return context.measureText(line).width;
+    }
+  }
+  return Array.from(line).reduce((width, character) => (
+    width + (/^[\x00-\x7F]$/.test(character) ? fontSize * 0.58 : fontSize)
+  ), 0);
+}
+
+function getAutoLabelMaxWidth(inputElement) {
+  if (!inputElement) return MAX_LABEL_WIDTH;
+  const canvas = inputElement.closest('.graph-canvas');
+  if (!canvas) return MAX_LABEL_WIDTH;
+  const availableWidth = Math.max(DEFAULT_LABEL_WIDTH, canvas.getBoundingClientRect().width - 24);
+  return Math.min(MAX_LABEL_WIDTH, availableWidth);
+}
+
+function getAutoLabelWidth(text, fontSize, inputElement) {
+  const lines = String(text || '').split('\n');
+  const longestLine = lines.reduce((longest, line) => (
+    line.length > longest.length ? line : longest
+  ), '');
+  if (!longestLine) return DEFAULT_LABEL_WIDTH;
+  const measuredWidth = measureLabelLineWidth(longestLine, fontSize, inputElement);
+  return clamp(Math.ceil(measuredWidth + LABEL_AUTO_PADDING), DEFAULT_LABEL_WIDTH, getAutoLabelMaxWidth(inputElement));
+}
+
+function normalizeLabelFontSize(value) {
+  const fontSize = Math.round(Number(value));
+  if (!Number.isFinite(fontSize)) return DEFAULT_LABEL_FONT_SIZE;
+  return clamp(fontSize, MIN_LABEL_FONT_SIZE, MAX_LABEL_FONT_SIZE);
+}
+
+function normalizeGraphLabel(label) {
+  const text = label && typeof label.text === 'string' ? label.text : '';
+  const rawWidth = Number(label && label.width);
+  const manualSize = label && label.manualSize === true;
+  const fontSize = normalizeLabelFontSize(label && label.fontSize);
+  const storedWidth = !manualSize && Number.isFinite(rawWidth) && rawWidth === 150 && text.length <= 6
+    ? DEFAULT_LABEL_WIDTH
+    : normalizeLabelWidth(label && label.width);
+  const width = manualSize ? storedWidth : Math.max(storedWidth, getAutoLabelWidth(text, fontSize));
+  return {
+    id: label && label.id ? label.id : makeId('label'),
+    text,
+    x: clamp(Number(label && label.x) || 50, 3, 97),
+    y: clamp(Number(label && label.y) || 50, 3, 97),
+    width,
+    fontSize,
+    color: normalizeLabelColor(label && label.color),
+    manualSize
+  };
+}
+
+function sanitizeLabels(labels) {
+  if (!Array.isArray(labels)) return [];
+  return labels.map((label) => normalizeGraphLabel(label));
 }
 
 function getSegments(dividers) {
@@ -216,6 +376,8 @@ function App() {
     }
   });
   const [activeTab, setActiveTab] = useState('plan');
+  const [lastPlanStep, setLastPlanStep] = useState(null);
+  const [presentationVisible, setPresentationVisible] = useState(false);
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -271,19 +433,29 @@ function App() {
               plan={state.plan}
               table={state.table}
               graph={state.graph}
+              initialStep={lastPlanStep}
+              presentationVisible={presentationVisible}
               onChange={(patch) => patchState('plan', patch)}
               onTableChange={(patch) => patchState('table', patch)}
               onGraphChange={(patch) => patchState('graph', patch)}
+              onStepChange={setLastPlanStep}
+              onShowPresentation={() => setPresentationVisible(true)}
             />
           )}
           {activeTab === 'table' && (
             <TableWorkspace
+              plan={state.plan}
               table={state.table}
               onTableChange={(patch) => patchState('table', patch)}
             />
           )}
           {activeTab === 'graph' && (
-            <GraphWorkspace graph={state.graph} onChange={(patch) => patchState('graph', patch)} />
+            <GraphWorkspace
+              plan={state.plan}
+              table={state.table}
+              graph={state.graph}
+              onChange={(patch) => patchState('graph', patch)}
+            />
           )}
         </section>
       </main>
@@ -301,14 +473,25 @@ function App() {
   );
 }
 
-function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphChange }) {
+function PlanWorkspace({
+  plan,
+  table,
+  graph,
+  initialStep,
+  presentationVisible,
+  onChange,
+  onTableChange,
+  onGraphChange,
+  onStepChange,
+  onShowPresentation
+}) {
   const titleRef = useRef(null);
   const itemsRef = useRef(null);
   const graphRef = useRef(null);
   const planSheetRef = useRef(null);
   const pendingScrollRef = useRef(null);
   const itemCount = getPlanItemCount(plan.items, table.headerRow);
-  const tableWidth = itemCount + 1;
+  const tableWidth = getTableWidthForItemCount(itemCount);
   const headerRow = fitHeaderRow(table.headerRow, tableWidth);
   const title = typeof plan.title === 'string' ? plan.title : (headerRow[0] || '');
   const items = fitRow(plan.items, itemCount);
@@ -320,27 +503,23 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
   const titleComplete = title.trim().length > 0;
   const itemsComplete = items.every((item) => item.trim().length > 0);
   const graphTypeLabel = graph.type === 'pie' ? '원그래프' : '띠그래프';
+  const graphSpeechLabel = graph.type === 'pie' ? '원' : '띠';
+  const presentationSentence = `저희 모둠의 그래프 제목은 ${summaryText(title, '제목')}입니다. 자료를 ${items.length}개의 항목으로 나누어 표로 정리하고 백분율을 구한 뒤 ${graphSpeechLabel}그래프로 나타내려 합니다.`;
   const [visibleStep, setVisibleStep] = useState(() => {
-    if (itemsComplete) return 3;
-    if (titleComplete) return 2;
-    return 1;
+    const activeInitialStep = getAllowedPlanStep(initialStep, titleComplete, itemsComplete);
+    return Math.max(getPlanProgressStep(titleComplete, itemsComplete), activeInitialStep);
   });
   const [activeStep, setActiveStep] = useState(() => {
-    if (itemsComplete) return 3;
-    if (titleComplete) return 2;
-    return 1;
+    return getAllowedPlanStep(initialStep, titleComplete, itemsComplete);
   });
 
   useEffect(() => {
+    const maxStep = getPlanMaxStep(titleComplete, itemsComplete);
     setVisibleStep((currentStep) => {
-      if (!titleComplete) return 1;
-      if (!itemsComplete) return Math.min(currentStep, 2);
-      return currentStep;
+      return Math.min(currentStep, maxStep);
     });
     setActiveStep((currentStep) => {
-      if (!titleComplete) return 1;
-      if (!itemsComplete && currentStep > 2) return 2;
-      return currentStep;
+      return Math.min(currentStep, maxStep);
     });
   }, [titleComplete, itemsComplete]);
 
@@ -355,9 +534,11 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
   }
 
   function goToStep(step, ref) {
+    const nextStep = getAllowedPlanStep(step, titleComplete, itemsComplete);
     pendingScrollRef.current = ref;
-    setActiveStep(step);
-    setVisibleStep((currentStep) => Math.max(currentStep, step));
+    setActiveStep(nextStep);
+    setVisibleStep((currentStep) => Math.max(currentStep, nextStep));
+    onStepChange(nextStep);
   }
 
   function handleAdvanceKey(event, step, ref) {
@@ -366,17 +547,8 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
     goToStep(step, ref);
   }
 
-  function updateHeaderCell(cellIndex, value) {
-    onTableChange((currentTable) => {
-      const nextHeader = fitHeaderRow(currentTable.headerRow, tableWidth);
-      nextHeader[cellIndex] = value;
-      return { ...currentTable, headerRow: nextHeader };
-    });
-  }
-
   function updateTitle(value) {
     onChange({ title: value });
-    updateHeaderCell(0, value);
   }
 
   function updateItem(index, value) {
@@ -388,24 +560,35 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
   function syncItems(nextItems, removedIndex = null) {
     onChange({ items: nextItems });
     onTableChange((currentTable) => {
-      const nextWidth = nextItems.length + 1;
-      const sourceWidth = Math.max(getTableWidth(currentTable), tableWidth);
+      const nextWidth = getTableWidthForItemCount(nextItems.length);
+      const sourceWidth = Math.max(getTableWidth(currentTable), tableWidth, nextWidth);
       let nextHeader = fitHeaderRow(currentTable.headerRow, sourceWidth);
-      let nextRow = fitRow(Array.isArray(currentTable.rows) ? currentTable.rows[0] : null, sourceWidth);
+      let nextRows = fitRows(currentTable.rows, sourceWidth);
 
       if (Number.isInteger(removedIndex)) {
         nextHeader.splice(removedIndex + 1, 1);
-        nextRow.splice(removedIndex + 1, 1);
+        nextRows = nextRows.map((row) => {
+          const nextRow = row.slice();
+          nextRow.splice(removedIndex + 1, 1);
+          return nextRow;
+        });
+      } else if (nextItems.length > items.length) {
+        const insertIndex = items.length + 1;
+        nextHeader.splice(insertIndex, 0, '');
+        nextRows = nextRows.map((row) => {
+          const nextRow = row.slice();
+          nextRow.splice(insertIndex, 0, '');
+          return nextRow;
+        });
       }
 
       nextHeader = fitHeaderRow(nextHeader, nextWidth);
-      nextRow = fitRow(nextRow, nextWidth);
-      nextHeader[0] = title;
+      nextRows = fitRows(nextRows, nextWidth);
       nextItems.forEach((item, index) => {
         nextHeader[index + 1] = item;
       });
 
-      return { ...currentTable, headerRow: nextHeader, rows: [nextRow] };
+      return { ...currentTable, headerRow: nextHeader, rows: nextRows };
     });
   }
 
@@ -495,6 +678,9 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
                 <strong>{graphTypeLabel}</strong>
               </div>
             </div>
+            {presentationVisible && (
+              <p className="presentation-script" aria-live="polite">{presentationSentence}</p>
+            )}
             <div className="plan-step-actions">
               <button
                 className="plan-previous-button"
@@ -505,6 +691,16 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
               >
                 <ChevronLeft size={18} aria-hidden="true" />
                 <span>이전</span>
+              </button>
+              <button
+                className="plan-present-button"
+                type="button"
+                onClick={onShowPresentation}
+                title="발표"
+                aria-label="발표 문장 채우기"
+              >
+                <Megaphone size={18} aria-hidden="true" />
+                <span>발표</span>
               </button>
             </div>
           </section>
@@ -653,24 +849,17 @@ function PlanWorkspace({ plan, table, graph, onChange, onTableChange, onGraphCha
   );
 }
 
-function TableWorkspace({ table, onTableChange }) {
-  const tableWidth = getTableWidth(table);
-  const fittedHeader = useMemo(() => fitHeaderRow(table.headerRow, tableWidth), [table.headerRow, tableWidth]);
+function TableWorkspace({ plan, table, onTableChange }) {
+  const itemCount = getPlanItemCount(plan.items, table.headerRow);
+  const tableWidth = getTableWidthForItemCount(itemCount);
+  const fittedHeader = useMemo(() => buildHeaderRow(plan.items, table.headerRow, tableWidth), [plan.items, table.headerRow, tableWidth]);
   const fittedRows = useMemo(() => fitRows(table.rows, tableWidth), [table.rows, tableWidth]);
 
   useEffect(() => {
-    if (!Array.isArray(table.headerRow) || table.headerRow.length !== tableWidth || !Array.isArray(table.rows) || table.rows.length !== 2 || table.rows.some((row) => !Array.isArray(row) || row.length !== tableWidth)) {
+    if (!areRowsEqual(table.headerRow, fittedHeader) || !areTableRowsEqual(table.rows, fittedRows)) {
       onTableChange({ headerRow: fittedHeader, rows: fittedRows });
     }
   }, [table.headerRow, table.rows, tableWidth, fittedHeader, fittedRows, onTableChange]);
-
-  function updateHeaderCell(cellIndex, value) {
-    onTableChange((currentTable) => {
-      const headerRow = fitHeaderRow(currentTable.headerRow, tableWidth);
-      headerRow[cellIndex] = value;
-      return { ...currentTable, headerRow };
-    });
-  }
 
   function updateCell(rowIndex, cellIndex, value) {
     onTableChange((currentTable) => {
@@ -683,54 +872,174 @@ function TableWorkspace({ table, onTableChange }) {
   return (
     <div className="table-workspace">
       <section className="panel-block table-panel">
-        <div className="manual-table-wrap">
-          <table className="manual-table" style={{ minWidth: `${Math.max(420, tableWidth * 118)}px` }}>
-            <thead>
-              <tr>
-                {fittedHeader.map((cell, cellIndex) => (
-                  <th key={cellIndex}>
-                    <input
-                      value={cell}
-                      onChange={(event) => updateHeaderCell(cellIndex, event.target.value)}
-                      readOnly={cellIndex === 0}
-                      aria-label={`머리행 ${cellIndex + 1}열`}
-                    />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {fittedRows.map((row, rowIndex) => (
-                <tr key={rowIndex}>
-                  {row.map((cell, cellIndex) => (
-                    <td key={cellIndex} className={cellIndex === 0 ? 'title-column-cell' : undefined}>
-                      <input
-                        value={cell}
-                        onChange={(event) => updateCell(rowIndex, cellIndex, event.target.value)}
-                        readOnly={cellIndex === 0}
-                        aria-label={`${rowIndex + 1}행 ${cellIndex + 1}열`}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
+        <ManualTable
+          headerRow={fittedHeader}
+          rows={fittedRows}
+          tableWidth={tableWidth}
+          onCellChange={updateCell}
+        />
       </section>
     </div>
   );
 }
 
-function GraphWorkspace({ graph, onChange }) {
+function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = false, compact = false }) {
+  const tableClassName = [
+    'manual-table',
+    readOnly ? 'is-read-only' : '',
+    compact ? 'is-compact' : ''
+  ].filter(Boolean).join(' ');
+
+  return (
+    <div className="manual-table-wrap">
+      <table className={tableClassName} style={{ minWidth: `${Math.max(360, tableWidth * (compact ? 92 : 104))}px` }}>
+        <thead>
+          <tr>
+            {headerRow.map((cell, cellIndex) => (
+              <th key={cellIndex}>
+                {readOnly ? (
+                  <span className="manual-table-cell-text">{cell}</span>
+                ) : (
+                  <input
+                    value={cell}
+                    readOnly
+                    aria-label={`머리행 ${cellIndex + 1}열`}
+                  />
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => {
+                const cellReadOnly = readOnly || cellIndex === 0;
+                return (
+                  <td key={cellIndex} className={cellIndex === 0 ? 'title-column-cell' : undefined}>
+                    {readOnly ? (
+                      <span className="manual-table-cell-text">{cell}</span>
+                    ) : (
+                      <input
+                        value={cell}
+                        onChange={cellReadOnly ? undefined : (event) => onCellChange(rowIndex, cellIndex, event.target.value)}
+                        readOnly={cellReadOnly}
+                        aria-label={`${rowIndex + 1}행 ${cellIndex + 1}열`}
+                      />
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function GraphTablePreview({ plan, table }) {
+  const itemCount = getPlanItemCount(plan.items, table.headerRow);
+  const tableWidth = getTableWidthForItemCount(itemCount);
+  const fittedHeader = buildHeaderRow(plan.items, table.headerRow, tableWidth);
+  const fittedRows = fitRows(table.rows, tableWidth);
+
+  return (
+    <section className="panel-block graph-table-panel" aria-label="표">
+      <ManualTable
+        headerRow={fittedHeader}
+        rows={fittedRows}
+        tableWidth={tableWidth}
+        readOnly
+        compact
+      />
+    </section>
+  );
+}
+
+function GraphScaleControl({ scale, onConfirm }) {
+  const currentScale = normalizeGraphScale(scale);
+  const [isOpen, setIsOpen] = useState(false);
+  const [draftScale, setDraftScale] = useState(currentScale);
+
+  useEffect(() => {
+    setDraftScale(currentScale);
+  }, [currentScale]);
+
+  function openSlider() {
+    setDraftScale(currentScale);
+    setIsOpen(true);
+  }
+
+  function confirmScale() {
+    const nextScale = normalizeGraphScale(draftScale);
+    onConfirm(nextScale);
+    setIsOpen(false);
+  }
+
+  function updateDraftFromPointer(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width) return;
+    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const nextScale = MIN_GRAPH_SCALE + Math.round(ratio * (MAX_GRAPH_SCALE - MIN_GRAPH_SCALE));
+    setDraftScale(nextScale);
+  }
+
+  function handleSliderPointerMove(event) {
+    if (event.buttons !== 1 && event.pointerType !== 'touch') return;
+    updateDraftFromPointer(event);
+  }
+
+  return (
+    <div className="scale-control">
+      <div className="scale-control-top">
+        <span>눈금 크기</span>
+        <button
+          className="scale-value-button"
+          type="button"
+          onClick={openSlider}
+          aria-expanded={isOpen}
+          aria-controls="graph-scale-slider"
+          aria-label={`눈금 크기 ${currentScale}% 조정`}
+        >
+          {currentScale}%
+        </button>
+      </div>
+      {isOpen && (
+        <div className="scale-slider-row" id="graph-scale-slider">
+          <input
+            type="range"
+            min={MIN_GRAPH_SCALE}
+            max={MAX_GRAPH_SCALE}
+            step="1"
+            value={draftScale}
+            onInput={(event) => setDraftScale(Number(event.currentTarget.value))}
+            onChange={(event) => setDraftScale(Number(event.target.value))}
+            onPointerDown={updateDraftFromPointer}
+            onPointerMove={handleSliderPointerMove}
+            aria-label="눈금 크기"
+          />
+          <output>{draftScale}%</output>
+          <button className="scale-confirm-button" type="button" onClick={confirmScale}>
+            확인
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GraphWorkspace({ plan, table, graph, onChange }) {
   const canvasRef = useRef(null);
   const segments = getSegments(graph.dividers);
   const dividerTicks = useMemo(() => makeDividerTicks(graph.scale), [graph.scale]);
   const coloredSegmentCount = getColoredSegmentCount(segments, graph.fills);
 
   function setGraph(patch) {
-    onChange({ ...graph, ...patch });
+    onChange((currentGraph) => {
+      const nextPatch = typeof patch === 'function' ? patch(currentGraph) : patch;
+      return { ...currentGraph, ...nextPatch };
+    });
   }
 
   function handleGraphPoint(point) {
@@ -751,13 +1060,17 @@ function GraphWorkspace({ graph, onChange }) {
       return;
     }
 
-    const labels = graph.labels.concat({
-      id: makeId('label'),
-      text: '글자',
-      x: point.canvasX,
-      y: point.canvasY
-    });
-    setGraph({ labels });
+    setGraph((currentGraph) => ({
+      labels: currentGraph.labels.concat({
+        id: makeId('label'),
+        text: '',
+        x: point.canvasX,
+        y: point.canvasY,
+        width: DEFAULT_LABEL_WIDTH,
+        fontSize: DEFAULT_LABEL_FONT_SIZE,
+        color: LABEL_COLORS[0]
+      })
+    }));
   }
 
   function toggleDivider(value) {
@@ -791,24 +1104,29 @@ function GraphWorkspace({ graph, onChange }) {
   }
 
   function addCenterLabel() {
-    setGraph({
-      labels: graph.labels.concat({
+    setGraph((currentGraph) => ({
+      labels: currentGraph.labels.concat({
         id: makeId('label'),
-        text: '글자',
+        text: '',
         x: 50,
-        y: graph.type === 'bar' ? 72 : 88
+        y: graph.type === 'bar' ? 72 : 88,
+        width: DEFAULT_LABEL_WIDTH,
+        fontSize: DEFAULT_LABEL_FONT_SIZE,
+        color: LABEL_COLORS[0]
       })
-    });
+    }));
   }
 
   function updateLabel(labelId, patch) {
-    setGraph({
-      labels: graph.labels.map((label) => (label.id === labelId ? { ...label, ...patch } : label))
-    });
+    setGraph((currentGraph) => ({
+      labels: currentGraph.labels.map((label) => (label.id === labelId ? { ...label, ...patch } : label))
+    }));
   }
 
   function removeLabel(labelId) {
-    setGraph({ labels: graph.labels.filter((label) => label.id !== labelId) });
+    setGraph((currentGraph) => ({
+      labels: currentGraph.labels.filter((label) => label.id !== labelId)
+    }));
   }
 
   function resetGraph() {
@@ -818,102 +1136,109 @@ function GraphWorkspace({ graph, onChange }) {
   }
 
   return (
-    <div className="workspace-grid graph-layout">
-      <aside className="tool-rail">
-        <SectionTitle icon={PieChart} title="그래프 틀" />
-        <SegmentedControl
-          value={graph.type}
-          onChange={(value) => setGraph({ type: value, dividers: [], fills: {} })}
-          items={[
-            { value: 'bar', label: '띠그래프', icon: Grid3X3 },
-            { value: 'pie', label: '원그래프', icon: Circle }
-          ]}
-        />
+    <div className="graph-workspace">
+      <GraphTablePreview plan={plan} table={table} />
 
-        <label className="field-label">
-          눈금 크기
-          <select className="text-input" value={graph.scale} onChange={(event) => setGraph({ scale: Number(event.target.value), dividers: [], fills: {} })}>
-            {[5, 10, 20, 25].map((value) => <option key={value} value={value}>{value}%</option>)}
-          </select>
-        </label>
+      <div className="workspace-grid graph-layout">
+        <aside className="tool-rail">
+          <SectionTitle icon={PieChart} title="그래프 틀" />
+          <SegmentedControl
+            value={graph.type}
+            onChange={(value) => setGraph({ type: value, dividers: [], fills: {} })}
+            items={[
+              { value: 'bar', label: '띠그래프', icon: Grid3X3 },
+              { value: 'pie', label: '원그래프', icon: Circle }
+            ]}
+          />
 
-        <SectionTitle icon={MousePointer2} title="작업 모드" />
-        <SegmentedControl
-          value={graph.mode}
-          onChange={(value) => setGraph({ mode: value })}
-          items={[
-            { value: 'divide', label: '나누기', icon: PenLine },
-            { value: 'paint', label: '색칠', icon: Brush },
-            { value: 'text', label: '글자', icon: PenLine }
-          ]}
-        />
+          <GraphScaleControl
+            scale={graph.scale}
+            onConfirm={(nextScale) => {
+              if (nextScale !== normalizeGraphScale(graph.scale)) {
+                setGraph({ scale: nextScale, dividers: [], fills: {} });
+              }
+            }}
+          />
 
-        <div className="swatch-block graph-swatches" aria-label="그래프 색">
-          {GRAPH_COLORS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className={`swatch ${graph.activeColor === color ? 'is-active' : ''}`}
-              style={{ backgroundColor: color }}
-              onClick={() => setGraph({ activeColor: color })}
-              title="색 고르기"
-            />
-          ))}
-        </div>
+          <SectionTitle icon={MousePointer2} title="작업 모드" />
+          <SegmentedControl
+            value={graph.mode}
+            onChange={(value) => setGraph({ mode: value })}
+            items={[
+              { value: 'divide', label: '나누기', icon: PenLine },
+              { value: 'paint', label: '색칠', icon: Brush },
+              { value: 'text', label: '글자', icon: PenLine }
+            ]}
+          />
 
-        <GraphManualPanel
-          graph={graph}
-          segments={segments}
-          dividerTicks={dividerTicks}
-          coloredSegmentCount={coloredSegmentCount}
-          onToggleDivider={toggleDivider}
-          onFillSegment={fillSegment}
-          onClearSegment={clearSegment}
-        />
-
-        <div className="graph-action-row">
-          <button className="icon-button" type="button" onClick={undoDivider} disabled={!graph.dividers.length} title="마지막 선 지우기" aria-label="마지막 선 지우기">
-            <Undo2 size={17} aria-hidden="true" />
-          </button>
-          <button className="icon-button" type="button" onClick={clearFills} disabled={!coloredSegmentCount} title="색 모두 지우기" aria-label="색 모두 지우기">
-            <Eraser size={17} aria-hidden="true" />
-          </button>
-          <button className="icon-button" type="button" onClick={addCenterLabel} title="글자 추가" aria-label="글자 추가">
-            <Plus size={17} aria-hidden="true" />
-          </button>
-        </div>
-
-        <button className="icon-text-button secondary" type="button" onClick={resetGraph}>
-          <Eraser size={18} aria-hidden="true" />
-          <span>그래프 지우기</span>
-        </button>
-      </aside>
-
-      <div className="graph-main">
-        <GraphCanvas
-          ref={canvasRef}
-          graph={graph}
-          segments={segments}
-          onPoint={handleGraphPoint}
-          onLabelChange={updateLabel}
-        />
-
-        <div className="label-editor">
-          <SectionTitle icon={PenLine} title="글자 목록" />
-          {graph.labels.length === 0 && <p className="empty-copy">글자 모드에서 그래프 위나 둘레를 누르면 글자를 놓을 수 있습니다.</p>}
-          {graph.labels.map((label) => (
-            <div className="label-row" key={label.id}>
-              <input
-                className="text-input compact"
-                value={label.text}
-                onChange={(event) => updateLabel(label.id, { text: event.target.value })}
-                aria-label="그래프 글자"
+          <div className="swatch-block graph-swatches" aria-label="그래프 색">
+            {GRAPH_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                className={`swatch ${graph.activeColor === color ? 'is-active' : ''}`}
+                style={{ backgroundColor: color }}
+                onClick={() => setGraph({ activeColor: color })}
+                title="색 고르기"
               />
-              <button className="icon-button danger" type="button" onClick={() => removeLabel(label.id)} title="글자 지우기">
-                <Trash2 size={17} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <GraphManualPanel
+            graph={graph}
+            segments={segments}
+            dividerTicks={dividerTicks}
+            coloredSegmentCount={coloredSegmentCount}
+            onToggleDivider={toggleDivider}
+            onFillSegment={fillSegment}
+            onClearSegment={clearSegment}
+          />
+
+          <div className="graph-action-row">
+            <button className="icon-button" type="button" onClick={undoDivider} disabled={!graph.dividers.length} title="마지막 선 지우기" aria-label="마지막 선 지우기">
+              <Undo2 size={17} aria-hidden="true" />
+            </button>
+            <button className="icon-button" type="button" onClick={clearFills} disabled={!coloredSegmentCount} title="색 모두 지우기" aria-label="색 모두 지우기">
+              <Eraser size={17} aria-hidden="true" />
+            </button>
+            <button className="icon-button" type="button" onClick={addCenterLabel} title="글자 추가" aria-label="글자 추가">
+              <Plus size={17} aria-hidden="true" />
+            </button>
+          </div>
+
+          <button className="icon-text-button secondary" type="button" onClick={resetGraph}>
+            <Eraser size={18} aria-hidden="true" />
+            <span>그래프 지우기</span>
+          </button>
+        </aside>
+
+        <div className="graph-main">
+          <GraphCanvas
+            ref={canvasRef}
+            graph={graph}
+            segments={segments}
+            onPoint={handleGraphPoint}
+            onLabelChange={updateLabel}
+            onLabelRemove={removeLabel}
+          />
+
+          <div className="label-editor">
+            <SectionTitle icon={PenLine} title="글자 목록" />
+            {graph.labels.length === 0 && <p className="empty-copy">글자 모드에서 그래프 위나 둘레를 누르면 글자를 놓을 수 있습니다.</p>}
+            {graph.labels.map((label) => (
+              <div className="label-row" key={label.id}>
+                <input
+                  className="text-input compact"
+                  value={label.text}
+                  onChange={(event) => updateLabel(label.id, { text: event.target.value })}
+                  aria-label="그래프 글자"
+                />
+                <button className="icon-button danger" type="button" onClick={() => removeLabel(label.id)} title="글자 지우기">
+                  <Trash2 size={17} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -970,9 +1295,13 @@ function GraphManualPanel({ graph, segments, dividerTicks, coloredSegmentCount, 
   );
 }
 
-const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onPoint, onLabelChange }, ref) {
-  const touchGuard = useRef(0);
+const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onPoint, onLabelChange, onLabelRemove }, ref) {
+  const activeDividerPointerId = useRef(null);
+  const labelActionRef = useRef(null);
+  const labelInputRefs = useRef(new Map());
+  const previousLabelIds = useRef(new Set(graph.labels.map((label) => label.id)));
   const [hoverPoint, setHoverPoint] = useState(null);
+  const [selectedLabelId, setSelectedLabelId] = useState(null);
   const previewDivider = hoverPoint && hoverPoint.insideGraph && graph.mode === 'divide'
     ? getSnappedDividerValue(graph, hoverPoint)
     : null;
@@ -989,13 +1318,64 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     }
     : null;
 
+  useEffect(() => {
+    const previousIds = previousLabelIds.current;
+    const nextLabel = graph.labels.find((label) => label.id && !previousIds.has(label.id));
+    if (nextLabel && nextLabel.id) setSelectedLabelId(nextLabel.id);
+    previousLabelIds.current = new Set(graph.labels.map((label) => label.id));
+  }, [graph.labels]);
+
+  useEffect(() => {
+    if (selectedLabelId && !graph.labels.some((label) => label.id === selectedLabelId)) {
+      setSelectedLabelId(null);
+    }
+  }, [graph.labels, selectedLabelId]);
+
+  useEffect(() => {
+    if (!selectedLabelId) return;
+    const input = labelInputRefs.current.get(selectedLabelId);
+    if (!input || input.value) return;
+    input.focus();
+    input.setSelectionRange(0, 0);
+  }, [selectedLabelId]);
+
+  useEffect(() => {
+    if (!selectedLabelId) return undefined;
+
+    function handleDocumentPointerDown(event) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('.graph-label-frame')) return;
+      releaseLabelSelection();
+    }
+
+    document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+    return () => document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+  }, [graph.labels, selectedLabelId]);
+
+  function removeLabelIfEmpty(labelId) {
+    const label = graph.labels.find((candidate) => candidate.id === labelId);
+    if (label && label.text.trim() === '') onLabelRemove(labelId);
+  }
+
+  function releaseLabelSelection(nextLabelId = null) {
+    if (selectedLabelId && selectedLabelId !== nextLabelId) {
+      removeLabelIfEmpty(selectedLabelId);
+    }
+    setSelectedLabelId(nextLabelId);
+  }
+
+  function selectLabel(labelId) {
+    releaseLabelSelection(labelId);
+  }
+
   function pointFromEvent(clientX, clientY, target) {
     const rect = target.getBoundingClientRect();
     const canvasX = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
     const canvasY = clamp(((clientY - rect.top) / rect.height) * 100, 0, 100);
     const graphElement = target.querySelector(graph.type === 'bar' ? '.bar-svg' : '.pie-svg');
     const graphRect = graphElement ? graphElement.getBoundingClientRect() : rect;
-    const svgHeight = graph.type === 'bar' ? 60 : 100;
+    const svgHeight = graph.type === 'bar' ? BAR_GRAPH_VIEWBOX.height : 100;
     const rawSvgX = graphRect.width ? ((clientX - graphRect.left) / graphRect.width) * 100 : 0;
     const rawSvgY = graphRect.height ? ((clientY - graphRect.top) / graphRect.height) * svgHeight : 0;
     const svgX = clamp(rawSvgX, 0, 100);
@@ -1013,36 +1393,130 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     return { canvasX, canvasY, svgX, svgY, graphX, graphY, percentAngle, insideGraph };
   }
 
-  function handleTouchStart(event) {
-    if (!event.touches || !event.touches.length) return;
-    touchGuard.current = Date.now();
+  function handlePointerDown(event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (selectedLabelId) {
+      event.preventDefault();
+      releaseLabelSelection();
+      setHoverPoint(null);
+      return;
+    }
+
+    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
+    setHoverPoint(point.insideGraph ? point : null);
+
+    if (graph.mode === 'divide') {
+      event.preventDefault();
+      if (!point.insideGraph) return;
+      activeDividerPointerId.current = event.pointerId;
+      if (event.currentTarget.setPointerCapture) {
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Some synthetic or interrupted pointer events cannot be captured.
+        }
+      }
+      return;
+    }
+
+    onPoint(point);
+  }
+
+  function handlePointerMove(event) {
+    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
+    setHoverPoint(point.insideGraph ? point : null);
+  }
+
+  function handlePointerUp(event) {
+    if (graph.mode !== 'divide' || activeDividerPointerId.current !== event.pointerId) return;
     event.preventDefault();
-    const point = pointFromEvent(event.touches[0].clientX, event.touches[0].clientY, event.currentTarget);
-    setHoverPoint(point.insideGraph ? point : null);
-    onPoint(point);
+    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
+    activeDividerPointerId.current = null;
+    if (event.currentTarget.releasePointerCapture && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may already be gone after cancellation or browser cleanup.
+      }
+    }
+    setHoverPoint(null);
+    if (point.insideGraph) onPoint(point);
   }
 
-  function handleMouseDown(event) {
-    if (Date.now() - touchGuard.current < 650) return;
-    if (event.button !== 0) return;
-    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
-    setHoverPoint(point.insideGraph ? point : null);
-    onPoint(point);
+  function handlePointerCancel(event) {
+    if (activeDividerPointerId.current !== event.pointerId) return;
+    activeDividerPointerId.current = null;
+    setHoverPoint(null);
   }
 
-  function handleMouseMove(event) {
-    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
-    setHoverPoint(point.insideGraph ? point : null);
+  function startLabelAction(event, label, action) {
+    event.preventDefault();
+    event.stopPropagation();
+    selectLabel(label.id);
+    const canvasRect = event.currentTarget.closest('.graph-canvas').getBoundingClientRect();
+    labelActionRef.current = {
+      action,
+      labelId: label.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      canvasRect,
+      label: normalizeGraphLabel(label)
+    };
+    if (event.currentTarget.setPointerCapture) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture can fail for synthetic or interrupted events.
+      }
+    }
+  }
+
+  function handleLabelActionMove(event) {
+    const action = labelActionRef.current;
+    if (!action || action.labelId !== event.currentTarget.dataset.labelId) return;
+    event.preventDefault();
+    const dx = event.clientX - action.startX;
+    const dy = event.clientY - action.startY;
+
+    if (action.action === 'move') {
+      onLabelChange(action.labelId, {
+        x: clamp(action.label.x + dx / action.canvasRect.width * 100, 3, 97),
+        y: clamp(action.label.y + dy / action.canvasRect.height * 100, 3, 97)
+      });
+      return;
+    }
+
+    onLabelChange(action.labelId, {
+      width: normalizeLabelWidth(action.label.width + dx),
+      fontSize: normalizeLabelFontSize(action.label.fontSize + Math.round(dx / 12)),
+      manualSize: true
+    });
+  }
+
+  function endLabelAction(event) {
+    const action = labelActionRef.current;
+    if (!action || action.labelId !== event.currentTarget.dataset.labelId) return;
+    labelActionRef.current = null;
+    if (event.currentTarget.releasePointerCapture && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may already be released.
+      }
+    }
   }
 
   return (
     <div
       className={`graph-canvas mode-${graph.mode}`}
       ref={ref}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => setHoverPoint(null)}
-      onTouchStart={handleTouchStart}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      onPointerLeave={() => {
+        if (activeDividerPointerId.current === null) setHoverPoint(null);
+      }}
       role="button"
       aria-label="그래프 그리기 영역"
     >
@@ -1054,37 +1528,132 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
 
       {readoutText && <div className="graph-readout" style={readoutStyle}>{readoutText}</div>}
 
-      {graph.labels.map((label) => (
-        <input
-          key={label.id}
-          className="graph-floating-label"
-          value={label.text}
-          style={{ left: `${label.x}%`, top: `${label.y}%` }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onTouchStart={(event) => event.stopPropagation()}
-          onChange={(event) => onLabelChange(label.id, { text: event.target.value })}
-          aria-label="그래프 글자"
-        />
-      ))}
+      {graph.labels.map((rawLabel) => {
+        const label = normalizeGraphLabel(rawLabel);
+        const isSelected = selectedLabelId === label.id;
+        const labelRows = Math.max(1, label.text.split('\n').length);
+        return (
+          <div
+            key={label.id}
+            className={`graph-label-frame ${isSelected ? 'is-selected' : ''}`}
+            style={{
+              left: `${label.x}%`,
+              top: `${label.y}%`,
+              width: `${label.width}px`
+            }}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              selectLabel(label.id);
+            }}
+          >
+            <textarea
+              ref={(node) => {
+                if (node) {
+                  labelInputRefs.current.set(label.id, node);
+                } else {
+                  labelInputRefs.current.delete(label.id);
+                }
+              }}
+              className="graph-floating-label"
+              value={label.text}
+              rows={labelRows}
+              wrap="off"
+              spellCheck="false"
+              style={{
+                color: label.color,
+                fontSize: `${label.fontSize}px`,
+                textShadow: label.color === '#ffffff'
+                  ? '0 1px 3px rgba(0, 0, 0, 0.72)'
+                  : '0 1px 2px rgba(255, 255, 255, 0.38)'
+              }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                selectLabel(label.id);
+              }}
+              onChange={(event) => {
+                const nextText = event.target.value;
+                const patch = { text: nextText };
+                if (!label.manualSize) {
+                  patch.width = getAutoLabelWidth(nextText, label.fontSize, event.currentTarget);
+                }
+                onLabelChange(label.id, patch);
+              }}
+              aria-label="그래프 글자"
+            />
+            {isSelected && (
+              <>
+                <button
+                  className="label-handle move"
+                  type="button"
+                  title="이동"
+                  aria-label="텍스트 이동"
+                  data-label-id={label.id}
+                  onPointerDown={(event) => startLabelAction(event, label, 'move')}
+                  onPointerMove={handleLabelActionMove}
+                  onPointerUp={endLabelAction}
+                  onPointerCancel={endLabelAction}
+                >
+                  <Move size={13} aria-hidden="true" />
+                </button>
+                <div className="label-color-tools" aria-label="텍스트 색">
+                  {LABEL_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      className={`label-color-button ${label.color === color ? 'is-active' : ''}`}
+                      type="button"
+                      style={{ backgroundColor: color }}
+                      title={color === '#ffffff' ? '흰색' : '검은색'}
+                      aria-label={color === '#ffffff' ? '흰색' : '검은색'}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => onLabelChange(label.id, { color })}
+                    />
+                  ))}
+                </div>
+                <button
+                  className="label-handle resize"
+                  type="button"
+                  title="크기 변경"
+                  aria-label="텍스트 크기 변경"
+                  data-label-id={label.id}
+                  onPointerDown={(event) => startLabelAction(event, label, 'resize')}
+                  onPointerMove={handleLabelActionMove}
+                  onPointerUp={endLabelAction}
+                  onPointerCancel={endLabelAction}
+                >
+                  <Maximize2 size={12} aria-hidden="true" />
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 });
 
 function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
-  const ticks = [];
-  for (let value = 0; value <= 100; value += graph.scale) ticks.push(value);
+  const scale = normalizeGraphScale(graph.scale);
+  const minorTicks = makeGraphTicks(scale, true).filter((tick) => !BAR_PERCENT_LABEL_TICKS.includes(tick));
+  const box = BAR_GRAPH_BOX;
+  const barRadius = 2.2;
   return (
-    <svg className="bar-svg" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
-      <rect x="6" y="18" width="88" height="24" rx="1.5" fill="#ffffff" stroke="#1f2d3d" strokeWidth="0.55" />
+    <svg className="bar-svg" viewBox={`0 0 ${BAR_GRAPH_VIEWBOX.width} ${BAR_GRAPH_VIEWBOX.height}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <defs>
+        <clipPath id="bar-graph-clip">
+          <rect x={box.left} y={box.top} width={box.width} height={box.height} rx={barRadius} />
+        </clipPath>
+      </defs>
+      <rect className="bar-graph-backdrop" x={box.left} y={box.top} width={box.width} height={box.height} rx={barRadius} />
       {segments.map((segment) => (
         <rect
           key={segment.key}
-          x={6 + segment.start * 0.88}
-          y="18"
-          width={(segment.end - segment.start) * 0.88}
-          height="24"
+          x={barPercentX(segment.start)}
+          y={box.top}
+          width={(segment.end - segment.start) * (box.width / 100)}
+          height={box.height}
           fill={graph.fills[segment.key] || 'rgba(255,255,255,0)'}
           stroke="none"
+          clipPath="url(#bar-graph-clip)"
         />
       ))}
       {segments.map((segment) => (
@@ -1092,33 +1661,46 @@ function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
           <rect
             key={`preview-${segment.key}`}
             className="graph-preview-segment"
-            x={6 + segment.start * 0.88}
-            y="18"
-            width={(segment.end - segment.start) * 0.88}
-            height="24"
+            x={barPercentX(segment.start)}
+            y={box.top}
+            width={(segment.end - segment.start) * (box.width / 100)}
+            height={box.height}
             fill="none"
+            clipPath="url(#bar-graph-clip)"
           />
         ) : null
       ))}
-      {ticks.map((tick) => (
+      <rect className="bar-graph-outline" x={box.left} y={box.top} width={box.width} height={box.height} rx={barRadius} />
+      {minorTicks.map((tick) => (
         <g key={tick}>
-          <line x1={6 + tick * 0.88} x2={6 + tick * 0.88} y1="15" y2="45" stroke="#bdc7d3" strokeWidth="0.24" />
-          <text x={6 + tick * 0.88} y="52" textAnchor="middle" fill="#52606f" fontSize="3.2">{tick}</text>
+          <line className="graph-minor-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top - 2.8} y2={box.top - 0.7} />
+          <line className="graph-minor-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top + box.height + 0.7} y2={box.top + box.height + 2.8} />
+        </g>
+      ))}
+      {BAR_PERCENT_LABEL_TICKS.map((tick) => (
+        <g key={`label-${tick}`}>
+          <line className="graph-major-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top - 3.6} y2={box.top - 0.6} />
+          <line className="graph-major-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top + box.height + 0.6} y2={box.top + box.height + 4.2} />
+          <text className="graph-tick-label" x={barPercentX(tick)} y="33" textAnchor="middle" fontSize="3.1">{tick}%</text>
         </g>
       ))}
       {Number.isFinite(previewDivider) && (
-        <line className="graph-preview-line" x1={6 + previewDivider * 0.88} x2={6 + previewDivider * 0.88} y1="14" y2="46" />
+        <line className="graph-preview-line" x1={barPercentX(previewDivider)} x2={barPercentX(previewDivider)} y1={box.top - 1.4} y2={box.top + box.height + 1.4} />
       )}
       {graph.dividers.map((divider) => (
-        <line key={divider} x1={6 + divider * 0.88} x2={6 + divider * 0.88} y1="16" y2="44" stroke="#1f2d3d" strokeWidth="1.05" />
+        <line key={divider} x1={barPercentX(divider)} x2={barPercentX(divider)} y1={box.top} y2={box.top + box.height} stroke="#1f2d3d" strokeWidth="1.05" />
       ))}
     </svg>
   );
 }
 
+function barPercentX(percent) {
+  return BAR_GRAPH_BOX.left + percent * (BAR_GRAPH_BOX.width / 100);
+}
+
 function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
-  const ticks = [];
-  for (let value = 0; value < 100; value += graph.scale) ticks.push(value);
+  const scale = normalizeGraphScale(graph.scale);
+  const minorTicks = makeGraphTicks(scale).filter((tick) => !PIE_PERCENT_LABEL_TICKS.includes(tick));
   return (
     <svg className="pie-svg" viewBox="0 0 100 100" aria-hidden="true">
       <circle cx="50" cy="50" r="38" fill="#ffffff" stroke="#1f2d3d" strokeWidth="1.15" />
@@ -1137,13 +1719,23 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
         return <path key={`preview-${segment.key}`} className="graph-preview-segment" d={sectorPath(50, 50, 38, segment.start, segment.end)} fill="none" />;
       })}
       <circle cx="50" cy="50" r="38" fill="none" stroke="#1f2d3d" strokeWidth="1.15" />
-      {ticks.map((tick) => {
-        const point = polarPoint(50, 50, 38, tick);
-        const label = polarPoint(50, 50, 44, tick);
+      {minorTicks.map((tick) => {
+        const inner = polarPoint(50, 50, 39.2, tick);
+        const outer = polarPoint(50, 50, 42, tick);
         return (
           <g key={tick}>
-            <line x1="50" y1="50" x2={point.x} y2={point.y} stroke="#bdc7d3" strokeWidth="0.45" />
-            <text x={label.x} y={label.y + 1.6} textAnchor="middle" fill="#52606f" fontSize="3.8">{tick}</text>
+            <line className="graph-minor-tick" x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} />
+          </g>
+        );
+      })}
+      {PIE_PERCENT_LABEL_TICKS.map((tick) => {
+        const inner = polarPoint(50, 50, 38.9, tick);
+        const outer = polarPoint(50, 50, 43, tick);
+        const label = getPieTickLabelPosition(tick);
+        return (
+          <g key={`label-${tick}`}>
+            <line className="graph-major-tick" x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} />
+            <text className="graph-tick-label" x={label.x} y={label.y} textAnchor={label.textAnchor} fontSize="4">{tick}%</text>
           </g>
         );
       })}
@@ -1305,9 +1897,25 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function makeDividerTicks(scale) {
+function normalizeGraphScale(value) {
+  if (value === undefined || value === null || value === '') return DEFAULT_GRAPH_SCALE;
+  const scale = Math.round(Number(value));
+  if (!Number.isFinite(scale)) return DEFAULT_GRAPH_SCALE;
+  return clamp(scale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+}
+
+function makeGraphTicks(scale, includeEnd = false) {
+  const safeScale = normalizeGraphScale(scale);
   const ticks = [];
-  for (let value = scale; value < 100; value += scale) ticks.push(value);
+  for (let value = 0; value < 100; value += safeScale) ticks.push(value);
+  if (includeEnd && ticks[ticks.length - 1] !== 100) ticks.push(100);
+  return ticks;
+}
+
+function makeDividerTicks(scale) {
+  const safeScale = normalizeGraphScale(scale);
+  const ticks = [];
+  for (let value = safeScale; value < 100; value += safeScale) ticks.push(value);
   return ticks;
 }
 
@@ -1317,7 +1925,9 @@ function getGraphPointValue(graph, point) {
 
 function getSnappedDividerValue(graph, point) {
   const raw = getGraphPointValue(graph, point);
-  return clamp(Math.round(raw / graph.scale) * graph.scale, graph.scale, 100 - graph.scale);
+  const scale = normalizeGraphScale(graph.scale);
+  const maxDivider = Math.floor(99 / scale) * scale;
+  return clamp(Math.round(raw / scale) * scale, scale, maxDivider);
 }
 
 function findSegmentByValue(segments, value) {
@@ -1360,6 +1970,12 @@ function polarPoint(cx, cy, radius, percent) {
     x: cx + radius * Math.cos(radians),
     y: cy + radius * Math.sin(radians)
   };
+}
+
+function getPieTickLabelPosition(tick) {
+  if (tick === 0) return { x: 50, y: 7.2, textAnchor: 'middle' };
+  const point = polarPoint(50, 50, 43.5, tick);
+  return { x: point.x, y: point.y + 1.4, textAnchor: 'middle' };
 }
 
 function sectorPath(cx, cy, radius, start, end) {
@@ -1526,7 +2142,7 @@ function packShareState(state) {
   const table = state && state.table ? state.table : {};
   const graph = state && state.graph ? state.graph : {};
   const itemCount = getPlanItemCount(plan.items, table.headerRow);
-  const tableWidth = itemCount + 1;
+  const tableWidth = getTableWidthForItemCount(itemCount);
 
   const planPayload = {};
   const title = typeof plan.title === 'string' ? plan.title : '';
@@ -1537,7 +2153,7 @@ function packShareState(state) {
   if (hasObjectKeys(planPayload)) packed.p = planPayload;
 
   const tablePayload = {};
-  const headerPayload = packRowForShare(table.headerRow, tableWidth);
+  const headerPayload = packRowForShare(buildHeaderRow(plan.items, table.headerRow, tableWidth), tableWidth);
   const rowPayload = packRowsForShare(table.rows, tableWidth);
   if (headerPayload) tablePayload.h = headerPayload;
   if (rowPayload) {
@@ -1575,7 +2191,7 @@ function packRowsForShare(rows, width) {
 function packGraphForShare(graph) {
   const packed = {};
   const type = graph.type === 'pie' ? 'pie' : 'bar';
-  const scale = Number(graph.scale) || 10;
+  const scale = normalizeGraphScale(graph.scale);
   const dividers = sanitizeDividers(Array.isArray(graph.dividers) ? graph.dividers : []);
   const fillPayload = packFillsForShare(graph.fills, dividers);
   const labelPayload = packLabelsForShare(graph.labels);
@@ -1583,7 +2199,7 @@ function packGraphForShare(graph) {
   const activeColor = graph.activeColor || GRAPH_COLORS[0];
 
   if (type === 'pie') packed.t = 'p';
-  if (scale !== 10) packed.s = scale;
+  if (scale !== DEFAULT_GRAPH_SCALE) packed.s = scale;
   if (dividers.length) packed.d = encodeDividersForShare(dividers);
   if (fillPayload) packed.f = fillPayload;
   if (labelPayload) packed.l = labelPayload;
@@ -1620,11 +2236,18 @@ function packFillsForShare(fills, dividers) {
 
 function packLabelsForShare(labels) {
   if (!Array.isArray(labels) || !labels.length) return null;
-  return labels.map((label) => [
-    label && typeof label.text === 'string' ? label.text : '',
-    quantizePercent(label && label.x),
-    quantizePercent(label && label.y)
-  ]);
+  return labels.map((rawLabel) => {
+    const label = normalizeGraphLabel(rawLabel);
+    return [
+      label.text,
+      quantizePercent(label.x),
+      quantizePercent(label.y),
+      label.width,
+      label.fontSize,
+      encodeColorForShare(label.color, LABEL_COLORS),
+      label.manualSize ? 1 : 0
+    ];
+  });
 }
 
 function unpackShareState(packed) {
@@ -1632,7 +2255,7 @@ function unpackShareState(packed) {
   const tablePayload = asPlainObject(packed.t);
   const planPayload = asPlainObject(packed.p);
   const itemCount = normalizePlanItemCount(planPayload.c, getPlanItemCount(planPayload.i, tablePayload.h));
-  const tableWidth = itemCount + 1;
+  const tableWidth = getTableWidthForItemCount(itemCount);
 
   return normalizeLoadedState({
     plan: {
@@ -1677,7 +2300,7 @@ function unpackRowsForShare(tablePayload, width) {
 function unpackGraphForShare(encoded) {
   const graph = asPlainObject(encoded);
   const dividers = decodeDividersForShare(graph.d);
-  const scale = [5, 10, 20, 25].includes(Number(graph.s)) ? Number(graph.s) : 10;
+  const scale = normalizeGraphScale(graph.s);
   return {
     type: graph.t === 'p' ? 'pie' : 'bar',
     scale,
@@ -1728,11 +2351,15 @@ function decodeLabelsForShare(encoded) {
   if (!Array.isArray(encoded)) return [];
   return encoded
     .filter((label) => Array.isArray(label))
-    .map((label) => ({
+    .map((label) => normalizeGraphLabel({
       id: makeId('label'),
       text: typeof label[0] === 'string' ? label[0] : '',
       x: decodeQuantizedPercent(label[1]),
-      y: decodeQuantizedPercent(label[2])
+      y: decodeQuantizedPercent(label[2]),
+      width: label[3],
+      fontSize: label[4],
+      color: decodeColorForShare(label[5], LABEL_COLORS, LABEL_COLORS[0]),
+      manualSize: label[6] === 1
     }));
 }
 
