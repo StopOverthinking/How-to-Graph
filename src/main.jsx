@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import QRCode from 'qrcode';
 import {
@@ -9,7 +10,6 @@ import {
 } from 'lz-string';
 import {
   ALargeSmall,
-  Brush,
   ChevronLeft,
   ChevronRight,
   Circle,
@@ -19,7 +19,6 @@ import {
   Maximize2,
   Megaphone,
   MousePointer2,
-  Move,
   PenLine,
   PieChart,
   Plus,
@@ -79,10 +78,15 @@ const LABEL_TICK_STEPS_BY_SCALE = {
   20: 40
 };
 const LABEL_COLORS = ['#1f2d3d', '#ffffff'];
+const LABEL_BORDER_MOVE_AREAS = ['top', 'right', 'bottom', 'left'];
 const DEFAULT_LABEL_WIDTH = 88;
 const MIN_LABEL_WIDTH = 40;
 const MAX_LABEL_WIDTH = 640;
-const LABEL_AUTO_PADDING = 24;
+const LABEL_AUTO_PADDING = 32;
+const LABEL_FRAME_MARGIN = 12;
+const LABEL_LINE_HEIGHT = 1.18;
+const LABEL_BOX_VERTICAL_PADDING_EM = 0.4;
+const LABEL_SELECTION_INSET_EM = 0.3;
 const DEFAULT_LABEL_FONT_SIZE = 20;
 const MIN_LABEL_FONT_SIZE = 12;
 const MAX_LABEL_FONT_SIZE = 34;
@@ -108,6 +112,7 @@ const QR_IMAGE_OPTIONS = {
 };
 const GRAPH_MODE_CODES = { divide: 'd', paint: 'p', text: 't' };
 const GRAPH_MODES_BY_CODE = { d: 'divide', p: 'paint', t: 'text' };
+const GRAPH_HISTORY_LIMIT = 80;
 const BAR_GRAPH_VIEWBOX = { width: 100, height: 36 };
 const BAR_GRAPH_BOX = { left: 8, top: 10, width: 84, height: 14 };
 const PIE_GRAPH_CIRCLE = { cx: 50, cy: 50, radius: 38 };
@@ -137,9 +142,14 @@ function createDefaultState() {
       activeColor: GRAPH_COLORS[0],
       dividers: [],
       fills: {},
+      undoStack: [],
       labels: []
     }
   };
+}
+
+function normalizeStoredGraphMode(value) {
+  return value === 'text' ? 'text' : 'divide';
 }
 
 function normalizeLoadedState(raw) {
@@ -168,10 +178,11 @@ function normalizeLoadedState(raw) {
     graph: {
       type: raw.graph && raw.graph.type === 'pie' ? 'pie' : 'bar',
       scale: normalizeGraphScale(raw.graph && raw.graph.scale),
-      mode: raw.graph && raw.graph.mode ? raw.graph.mode : fallback.graph.mode,
+      mode: normalizeStoredGraphMode(raw.graph && raw.graph.mode),
       activeColor: raw.graph && raw.graph.activeColor ? raw.graph.activeColor : fallback.graph.activeColor,
       dividers: raw.graph && Array.isArray(raw.graph.dividers) ? sanitizeDividers(raw.graph.dividers) : [],
       fills: raw.graph && raw.graph.fills ? raw.graph.fills : {},
+      undoStack: sanitizeGraphUndoStack(raw.graph && raw.graph.undoStack),
       labels: sanitizeLabels(raw.graph && raw.graph.labels)
     }
   };
@@ -304,14 +315,69 @@ function sanitizeDividers(dividers) {
     .filter((value, index, array) => array.indexOf(value) === index);
 }
 
+function cloneGraphFills(fills) {
+  const next = {};
+  if (!fills || typeof fills !== 'object') return next;
+  Object.entries(fills).forEach(([key, color]) => {
+    if (typeof key === 'string' && typeof color === 'string' && color) next[key] = color;
+  });
+  return next;
+}
+
+function makeGraphUndoSnapshot(graph) {
+  return {
+    dividers: sanitizeDividers(Array.isArray(graph && graph.dividers) ? graph.dividers : []),
+    fills: cloneGraphFills(graph && graph.fills)
+  };
+}
+
+function areGraphFillsEqual(left, right) {
+  const leftKeys = Object.keys(left || {});
+  const rightKeys = Object.keys(right || {});
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
+function areGraphUndoSnapshotsEqual(left, right) {
+  if (!left || !right) return false;
+  if (!areRowsEqual(left.dividers, right.dividers)) return false;
+  return areGraphFillsEqual(left.fills, right.fills);
+}
+
+function sanitizeGraphUndoStack(stack) {
+  if (!Array.isArray(stack)) return [];
+  return stack
+    .slice(-GRAPH_HISTORY_LIMIT)
+    .map((snapshot) => makeGraphUndoSnapshot(snapshot));
+}
+
+function pushGraphUndoStack(graph, snapshot = makeGraphUndoSnapshot(graph)) {
+  const currentStack = sanitizeGraphUndoStack(graph && graph.undoStack);
+  const lastSnapshot = currentStack[currentStack.length - 1];
+  const nextStack = lastSnapshot && areGraphUndoSnapshotsEqual(lastSnapshot, snapshot)
+    ? currentStack
+    : currentStack.concat(snapshot);
+  return nextStack.slice(-GRAPH_HISTORY_LIMIT);
+}
+
+function withGraphUndo(currentGraph, nextPatch) {
+  const previousSnapshot = makeGraphUndoSnapshot(currentGraph);
+  const nextSnapshot = makeGraphUndoSnapshot({ ...currentGraph, ...nextPatch });
+  if (areGraphUndoSnapshotsEqual(previousSnapshot, nextSnapshot)) return nextPatch;
+  return {
+    ...nextPatch,
+    undoStack: pushGraphUndoStack(currentGraph, previousSnapshot)
+  };
+}
+
 function normalizeLabelColor(value) {
   return LABEL_COLORS.includes(value) ? value : LABEL_COLORS[0];
 }
 
 function normalizeLabelWidth(value) {
-  const width = Math.round(Number(value));
+  const width = Number(value);
   if (!Number.isFinite(width)) return DEFAULT_LABEL_WIDTH;
-  return clamp(width, MIN_LABEL_WIDTH, MAX_LABEL_WIDTH);
+  return roundLabelMetric(clamp(width, MIN_LABEL_WIDTH, MAX_LABEL_WIDTH));
 }
 
 function measureLabelLineWidth(line, fontSize, inputElement) {
@@ -335,28 +401,92 @@ function measureLabelLineWidth(line, fontSize, inputElement) {
   ), 0);
 }
 
-function getAutoLabelMaxWidth(inputElement) {
-  if (!inputElement) return MAX_LABEL_WIDTH;
+function getAutoLabelMaxWidth(inputElement, maxWidth = MAX_LABEL_WIDTH) {
+  if (!inputElement) return maxWidth;
   const canvas = inputElement.closest('.graph-canvas');
-  if (!canvas) return MAX_LABEL_WIDTH;
+  if (!canvas) return maxWidth;
   const availableWidth = Math.max(DEFAULT_LABEL_WIDTH, canvas.getBoundingClientRect().width - 24);
-  return Math.min(MAX_LABEL_WIDTH, availableWidth);
+  return Math.min(maxWidth, availableWidth);
 }
 
-function getAutoLabelWidth(text, fontSize, inputElement) {
+function getAutoLabelWidth(text, fontSize, inputElement, maxWidth = getAutoLabelMaxWidth(inputElement)) {
   const lines = String(text || '').split('\n');
   const longestLine = lines.reduce((longest, line) => (
     line.length > longest.length ? line : longest
   ), '');
   if (!longestLine) return DEFAULT_LABEL_WIDTH;
   const measuredWidth = measureLabelLineWidth(longestLine, fontSize, inputElement);
-  return clamp(Math.ceil(measuredWidth + LABEL_AUTO_PADDING), DEFAULT_LABEL_WIDTH, getAutoLabelMaxWidth(inputElement));
+  return clamp(Math.ceil(measuredWidth + LABEL_AUTO_PADDING), DEFAULT_LABEL_WIDTH, maxWidth);
+}
+
+function getSafeLabelWidth(text, fontSize, width, inputElement, maxWidth = getAutoLabelMaxWidth(inputElement)) {
+  const boundedWidth = Math.min(normalizeLabelWidth(width), maxWidth);
+  const contentWidth = getAutoLabelWidth(text, fontSize, inputElement, maxWidth);
+  return roundLabelMetric(Math.max(boundedWidth, contentWidth));
 }
 
 function normalizeLabelFontSize(value) {
-  const fontSize = Math.round(Number(value));
+  const fontSize = Number(value);
   if (!Number.isFinite(fontSize)) return DEFAULT_LABEL_FONT_SIZE;
-  return clamp(fontSize, MIN_LABEL_FONT_SIZE, MAX_LABEL_FONT_SIZE);
+  return roundLabelMetric(clamp(fontSize, MIN_LABEL_FONT_SIZE, MAX_LABEL_FONT_SIZE));
+}
+
+function roundLabelMetric(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function getLabelBoxHeight(rowCount, fontSize) {
+  return roundLabelMetric(fontSize * (Math.max(1, rowCount) * LABEL_LINE_HEIGHT + LABEL_BOX_VERTICAL_PADDING_EM));
+}
+
+function getLabelVisualRowCount(text, fontSize, width, inputElement) {
+  const contentWidth = Math.max(fontSize, normalizeLabelWidth(width) - LABEL_AUTO_PADDING);
+  return String(text || '').split('\n').reduce((rowCount, line) => {
+    if (!line) return rowCount + 1;
+    const lineWidth = measureLabelLineWidth(line, fontSize, inputElement);
+    return rowCount + Math.max(1, Math.ceil(lineWidth / contentWidth));
+  }, 0);
+}
+
+function getLabelBoxHeightForText(text, fontSize, width, inputElement) {
+  return getLabelBoxHeight(getLabelVisualRowCount(text, fontSize, width, inputElement), fontSize);
+}
+
+function getLabelSelectionInset(fontSize) {
+  return roundLabelMetric(fontSize * LABEL_SELECTION_INSET_EM);
+}
+
+function getLabelResizeScale(action, dx, dy) {
+  const frameWidth = Math.max(1, action.frameRect.width);
+  const frameHeight = Math.max(1, action.frameRect.height);
+  const diagonalSquared = frameWidth * frameWidth + frameHeight * frameHeight;
+  const projectedScale = 1 + (dx * frameWidth + dy * frameHeight) / diagonalSquared;
+  const minScale = Math.max(
+    MIN_LABEL_WIDTH / action.label.width,
+    MIN_LABEL_FONT_SIZE / action.label.fontSize
+  );
+  const maxScale = Math.min(
+    (action.maxLabelWidth || MAX_LABEL_WIDTH) / action.label.width,
+    MAX_LABEL_FONT_SIZE / action.label.fontSize
+  );
+  return clamp(projectedScale, minScale, maxScale);
+}
+
+function getCanvasLabelMaxWidth(canvasSize) {
+  if (!canvasSize || !Number.isFinite(canvasSize.width) || canvasSize.width <= 0) return MAX_LABEL_WIDTH;
+  return Math.max(DEFAULT_LABEL_WIDTH, Math.min(MAX_LABEL_WIDTH, canvasSize.width - LABEL_FRAME_MARGIN * 2));
+}
+
+function clampLabelCenterToCanvas(x, y, width, height, canvasRect) {
+  if (!canvasRect || !canvasRect.width || !canvasRect.height) {
+    return { x: clamp(x, 3, 97), y: clamp(y, 3, 97) };
+  }
+  const halfWidthPercent = Math.min(50, (width / 2 / canvasRect.width) * 100);
+  const halfHeightPercent = Math.min(50, (height / 2 / canvasRect.height) * 100);
+  return {
+    x: clamp(x, halfWidthPercent, 100 - halfWidthPercent),
+    y: clamp(y, halfHeightPercent, 100 - halfHeightPercent)
+  };
 }
 
 function normalizeGraphLabel(label) {
@@ -367,7 +497,9 @@ function normalizeGraphLabel(label) {
   const storedWidth = !manualSize && Number.isFinite(rawWidth) && rawWidth === 150 && text.length <= 6
     ? DEFAULT_LABEL_WIDTH
     : normalizeLabelWidth(label && label.width);
-  const width = manualSize ? storedWidth : Math.max(storedWidth, getAutoLabelWidth(text, fontSize));
+  const width = manualSize
+    ? getSafeLabelWidth(text, fontSize, storedWidth)
+    : Math.max(storedWidth, getAutoLabelWidth(text, fontSize));
   return {
     id: label && label.id ? label.id : makeId('label'),
     text,
@@ -638,7 +770,7 @@ function PlanWorkspace({
 
   function chooseGraphType(type) {
     if (graph.type === type) return;
-    onGraphChange({ type, dividers: [], fills: {} });
+    onGraphChange({ type, dividers: [], fills: {}, undoStack: [] });
   }
 
   function summaryText(value, fallback) {
@@ -1067,6 +1199,7 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
   const canvasRef = useRef(null);
   const segments = getSegments(graph.dividers);
   const coloredSegmentCount = getColoredSegmentCount(segments, graph.fills);
+  const canUndoGraphAction = Array.isArray(graph.undoStack) && graph.undoStack.length > 0;
 
   function setGraph(patch) {
     onChange((currentGraph) => {
@@ -1079,17 +1212,29 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
     if ((graph.mode === 'divide' || graph.mode === 'paint') && !point.insideGraph) return;
 
     if (graph.mode === 'divide') {
-      const snapped = getSnappedDividerValue(graph, point);
-      const hasDivider = graph.dividers.indexOf(snapped) !== -1;
-      const dividers = hasDivider
-        ? graph.dividers.filter((value) => value !== snapped)
-        : sanitizeDividers(graph.dividers.concat(snapped));
-      setGraph({ dividers });
+      setGraph((currentGraph) => {
+        const snapped = getSnappedDividerValue(currentGraph, point);
+        const currentDividers = Array.isArray(currentGraph.dividers) ? currentGraph.dividers : [];
+        const hasDivider = currentDividers.indexOf(snapped) !== -1;
+        const dividers = hasDivider
+          ? currentDividers.filter((value) => value !== snapped)
+          : sanitizeDividers(currentDividers.concat(snapped));
+        return withGraphUndo(currentGraph, { dividers });
+      });
       return;
     }
 
     if (graph.mode === 'paint') {
-      fillSegment(findSegmentFromPoint(graph, segments, point));
+      setGraph((currentGraph) => {
+        const currentSegments = getSegments(currentGraph.dividers);
+        const segment = findSegmentFromPoint(currentGraph, currentSegments, point);
+        if (!segment) return {};
+        const activeColor = currentGraph.activeColor || GRAPH_COLORS[0];
+        if (currentGraph.fills && currentGraph.fills[segment.key] === activeColor) return {};
+        return withGraphUndo(currentGraph, {
+          fills: { ...cloneGraphFills(currentGraph.fills), [segment.key]: activeColor }
+        });
+      });
       return;
     }
 
@@ -1106,40 +1251,48 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
     }));
   }
 
-  function undoDivider() {
-    if (!graph.dividers.length) return;
-    setGraph({ dividers: graph.dividers.slice(0, -1) });
+  function undoGraphAction() {
+    if (!canUndoGraphAction) return;
+    setGraph((currentGraph) => {
+      const undoStack = sanitizeGraphUndoStack(currentGraph.undoStack);
+      const previousSnapshot = undoStack[undoStack.length - 1];
+      if (!previousSnapshot) return {};
+      return {
+        dividers: previousSnapshot.dividers.slice(),
+        fills: { ...previousSnapshot.fills },
+        undoStack: undoStack.slice(0, -1)
+      };
+    });
   }
 
   function fillSegment(segment) {
     if (!segment) return;
-    setGraph({ fills: { ...graph.fills, [segment.key]: graph.activeColor } });
+    setGraph((currentGraph) => {
+      const activeColor = currentGraph.activeColor || GRAPH_COLORS[0];
+      if (currentGraph.fills && currentGraph.fills[segment.key] === activeColor) return {};
+      return withGraphUndo(currentGraph, {
+        fills: { ...cloneGraphFills(currentGraph.fills), [segment.key]: activeColor }
+      });
+    });
   }
 
   function clearSegment(segment) {
-    if (!segment || !graph.fills[segment.key]) return;
-    const fills = { ...graph.fills };
-    delete fills[segment.key];
-    setGraph({ fills });
+    if (!segment) return;
+    setGraph((currentGraph) => {
+      if (!currentGraph.fills || !currentGraph.fills[segment.key]) return {};
+      const fills = cloneGraphFills(currentGraph.fills);
+      delete fills[segment.key];
+      return withGraphUndo(currentGraph, { fills });
+    });
   }
 
   function clearFills() {
     if (!coloredSegmentCount) return;
-    setGraph({ fills: {} });
-  }
-
-  function addCenterLabel() {
-    setGraph((currentGraph) => ({
-      labels: currentGraph.labels.concat({
-        id: makeId('label'),
-        text: '',
-        x: 50,
-        y: graph.type === 'bar' ? 72 : 88,
-        width: DEFAULT_LABEL_WIDTH,
-        fontSize: DEFAULT_LABEL_FONT_SIZE,
-        color: LABEL_COLORS[0]
-      })
-    }));
+    setGraph((currentGraph) => {
+      const currentSegments = getSegments(currentGraph.dividers);
+      if (!getColoredSegmentCount(currentSegments, currentGraph.fills)) return {};
+      return withGraphUndo(currentGraph, { fills: {} });
+    });
   }
 
   function updateLabel(labelId, patch) {
@@ -1156,7 +1309,7 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
 
   function resetGraph() {
     if (window.confirm('그래프에 그린 선, 색, 글자를 모두 지울까요?')) {
-      setGraph({ dividers: [], fills: {}, labels: [] });
+      setGraph({ dividers: [], fills: {}, labels: [], undoStack: [] });
     }
   }
 
@@ -1170,7 +1323,7 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
             scale={graph.scale}
             onConfirm={(nextScale) => {
               if (nextScale !== normalizeGraphScale(graph.scale)) {
-                setGraph({ scale: nextScale, dividers: [], fills: {} });
+                setGraph({ scale: nextScale, dividers: [], fills: {}, undoStack: [] });
               }
             }}
           />
@@ -1181,7 +1334,6 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
             onChange={(value) => setGraph({ mode: value })}
             items={[
               { value: 'divide', label: '나누기', icon: PenLine },
-              { value: 'paint', label: '색칠', icon: Brush },
               { value: 'text', label: '글자', icon: ALargeSmall }
             ]}
           />
@@ -1193,8 +1345,9 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
                 type="button"
                 className={`swatch ${graph.activeColor === color ? 'is-active' : ''}`}
                 style={{ backgroundColor: color }}
-                onClick={() => setGraph({ activeColor: color })}
-                title="색 고르기"
+                onClick={() => setGraph({ activeColor: color, mode: 'paint' })}
+                title="이 색으로 색칠하기"
+                aria-label="이 색으로 색칠하기"
               />
             ))}
           </div>
@@ -1207,14 +1360,11 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
           />
 
           <div className="graph-action-row">
-            <button className="icon-button" type="button" onClick={undoDivider} disabled={!graph.dividers.length} title="마지막 선 지우기" aria-label="마지막 선 지우기">
+            <button className="icon-button" type="button" onClick={undoGraphAction} disabled={!canUndoGraphAction} title="실행 취소" aria-label="실행 취소">
               <Undo2 size={17} aria-hidden="true" />
             </button>
             <button className="icon-button" type="button" onClick={clearFills} disabled={!coloredSegmentCount} title="색 모두 지우기" aria-label="색 모두 지우기">
               <Eraser size={17} aria-hidden="true" />
-            </button>
-            <button className="icon-button" type="button" onClick={addCenterLabel} title="글자 추가" aria-label="글자 추가">
-              <Plus size={17} aria-hidden="true" />
             </button>
           </div>
 
@@ -1234,23 +1384,6 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
             onLabelRemove={removeLabel}
           />
 
-          <div className="label-editor">
-            <SectionTitle icon={PenLine} title="글자 목록" />
-            {graph.labels.length === 0 && <p className="empty-copy">글자 모드에서 그래프 위나 둘레를 누르면 글자를 놓을 수 있습니다.</p>}
-            {graph.labels.map((label) => (
-              <div className="label-row" key={label.id}>
-                <input
-                  className="text-input compact"
-                  value={label.text}
-                  onChange={(event) => updateLabel(label.id, { text: event.target.value })}
-                  aria-label="그래프 글자"
-                />
-                <button className="icon-button danger" type="button" onClick={() => removeLabel(label.id)} title="글자 지우기">
-                  <Trash2 size={17} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </div>
@@ -1288,11 +1421,14 @@ function GraphManualPanel({ graph, segments, onFillSegment, onClearSegment }) {
 }
 
 const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onPoint, onLabelChange, onLabelRemove }, ref) {
+  const canvasElementRef = useRef(null);
   const activeDividerPointerId = useRef(null);
   const labelActionRef = useRef(null);
   const labelInputRefs = useRef(new Map());
+  const onLabelChangeRef = useRef(onLabelChange);
   const previousLabelIds = useRef(new Set(graph.labels.map((label) => label.id)));
   const [hoverPoint, setHoverPoint] = useState(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [selectedLabelId, setSelectedLabelId] = useState(null);
   const previewDivider = hoverPoint && hoverPoint.insideGraph && graph.mode === 'divide'
     ? getSnappedDividerValue(graph, hoverPoint)
@@ -1309,6 +1445,37 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
       top: `${clamp(hoverPoint.canvasY - 8, 7, 93)}%`
     }
     : null;
+
+  useEffect(() => {
+    onLabelChangeRef.current = onLabelChange;
+  }, [onLabelChange]);
+
+  useEffect(() => {
+    const canvasElement = canvasElementRef.current;
+    if (!canvasElement) return undefined;
+
+    function updateCanvasSize() {
+      const rect = canvasElement.getBoundingClientRect();
+      setCanvasSize((currentSize) => {
+        const width = roundLabelMetric(rect.width);
+        const height = roundLabelMetric(rect.height);
+        return currentSize.width === width && currentSize.height === height
+          ? currentSize
+          : { width, height };
+      });
+    }
+
+    updateCanvasSize();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateCanvasSize);
+      observer.observe(canvasElement);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener('resize', updateCanvasSize);
+    return () => window.removeEventListener('resize', updateCanvasSize);
+  }, []);
 
   useEffect(() => {
     const previousIds = previousLabelIds.current;
@@ -1345,6 +1512,27 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     document.addEventListener('pointerdown', handleDocumentPointerDown, true);
     return () => document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
   }, [graph.labels, selectedLabelId]);
+
+  useEffect(() => {
+    function handleDocumentLabelActionMove(event) {
+      if (!labelActionRef.current) return;
+      event.preventDefault();
+      updateLabelAction(event.clientX, event.clientY);
+    }
+
+    function handleDocumentLabelActionEnd() {
+      if (labelActionRef.current) labelActionRef.current = null;
+    }
+
+    document.addEventListener('pointermove', handleDocumentLabelActionMove, true);
+    document.addEventListener('pointerup', handleDocumentLabelActionEnd, true);
+    document.addEventListener('pointercancel', handleDocumentLabelActionEnd, true);
+    return () => {
+      document.removeEventListener('pointermove', handleDocumentLabelActionMove, true);
+      document.removeEventListener('pointerup', handleDocumentLabelActionEnd, true);
+      document.removeEventListener('pointercancel', handleDocumentLabelActionEnd, true);
+    };
+  }, []);
 
   function removeLabelIfEmpty(labelId) {
     const label = graph.labels.find((candidate) => candidate.id === labelId);
@@ -1444,17 +1632,32 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     setHoverPoint(null);
   }
 
+  function setGraphCanvasRef(node) {
+    canvasElementRef.current = node;
+    if (typeof ref === 'function') {
+      ref(node);
+    } else if (ref) {
+      ref.current = node;
+    }
+  }
+
   function startLabelAction(event, label, action) {
     event.preventDefault();
     event.stopPropagation();
     selectLabel(label.id);
     const canvasRect = event.currentTarget.closest('.graph-canvas').getBoundingClientRect();
+    const frameElement = event.currentTarget.closest('.graph-label-frame');
+    const frameRect = frameElement
+      ? frameElement.getBoundingClientRect()
+      : { left: event.clientX, top: event.clientY, width: label.width, height: getLabelBoxHeightForText(label.text, label.fontSize, label.width) };
     labelActionRef.current = {
       action,
       labelId: label.id,
       startX: event.clientX,
       startY: event.clientY,
       canvasRect,
+      frameRect,
+      maxLabelWidth: getCanvasLabelMaxWidth({ width: canvasRect.width, height: canvasRect.height }),
       label: normalizeGraphLabel(label)
     };
     if (event.currentTarget.setPointerCapture) {
@@ -1466,25 +1669,53 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     }
   }
 
-  function handleLabelActionMove(event) {
+  function updateLabelAction(clientX, clientY) {
     const action = labelActionRef.current;
-    if (!action || action.labelId !== event.currentTarget.dataset.labelId) return;
-    event.preventDefault();
-    const dx = event.clientX - action.startX;
-    const dy = event.clientY - action.startY;
+    if (!action) return;
+    const dx = clientX - action.startX;
+    const dy = clientY - action.startY;
 
     if (action.action === 'move') {
-      onLabelChange(action.labelId, {
-        x: clamp(action.label.x + dx / action.canvasRect.width * 100, 3, 97),
-        y: clamp(action.label.y + dy / action.canvasRect.height * 100, 3, 97)
+      const nextPosition = clampLabelCenterToCanvas(
+        action.label.x + dx / action.canvasRect.width * 100,
+        action.label.y + dy / action.canvasRect.height * 100,
+        action.frameRect.width,
+        action.frameRect.height,
+        action.canvasRect
+      );
+      applyLabelActionPatch(action.labelId, {
+        x: nextPosition.x,
+        y: nextPosition.y
       });
       return;
     }
 
-    onLabelChange(action.labelId, {
-      width: normalizeLabelWidth(action.label.width + dx),
-      fontSize: normalizeLabelFontSize(action.label.fontSize + Math.round(dx / 12)),
+    const scale = getLabelResizeScale(action, dx, dy);
+    const nextFontSize = normalizeLabelFontSize(action.label.fontSize * scale);
+    const nextWidth = getSafeLabelWidth(action.label.text, nextFontSize, action.label.width * scale, null, action.maxLabelWidth);
+    const nextHeight = getLabelBoxHeightForText(action.label.text, nextFontSize, nextWidth);
+    const nextCenterX = action.frameRect.left + nextWidth / 2;
+    const nextCenterY = action.frameRect.top + nextHeight / 2;
+    const nextPosition = clampLabelCenterToCanvas(
+      (nextCenterX - action.canvasRect.left) / action.canvasRect.width * 100,
+      (nextCenterY - action.canvasRect.top) / action.canvasRect.height * 100,
+      nextWidth,
+      nextHeight,
+      action.canvasRect
+    );
+
+    applyLabelActionPatch(action.labelId, {
+      x: nextPosition.x,
+      y: nextPosition.y,
+      width: nextWidth,
+      fontSize: nextFontSize,
       manualSize: true
+    });
+  }
+
+  function applyLabelActionPatch(labelId, patch) {
+    flushSync(() => {
+      onLabelChangeRef.current(labelId, patch);
     });
   }
 
@@ -1504,7 +1735,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   return (
     <div
       className={`graph-canvas mode-${graph.mode}`}
-      ref={ref}
+      ref={setGraphCanvasRef}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -1526,15 +1757,22 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
       {graph.labels.map((rawLabel) => {
         const label = normalizeGraphLabel(rawLabel);
         const isSelected = selectedLabelId === label.id;
-        const labelRows = Math.max(1, label.text.split('\n').length);
+        const inputElement = labelInputRefs.current.get(label.id);
+        const maxLabelWidth = getCanvasLabelMaxWidth(canvasSize);
+        const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, inputElement, maxLabelWidth);
+        const labelHeight = getLabelBoxHeightForText(label.text, label.fontSize, labelWidth, inputElement);
+        const labelRows = getLabelVisualRowCount(label.text, label.fontSize, labelWidth, inputElement);
+        const displayLabel = { ...label, width: labelWidth };
         return (
           <div
             key={label.id}
             className={`graph-label-frame ${isSelected ? 'is-selected' : ''}`}
             style={{
-              left: `${label.x}%`,
-              top: `${label.y}%`,
-              width: `${label.width}px`
+              left: `clamp(${labelWidth / 2}px, ${label.x}%, calc(100% - ${labelWidth / 2}px))`,
+              top: `clamp(${labelHeight / 2}px, ${label.y}%, calc(100% - ${labelHeight / 2}px))`,
+              width: `${labelWidth}px`,
+              height: `${labelHeight}px`,
+              '--label-selection-inset': `${getLabelSelectionInset(label.fontSize)}px`
             }}
             onPointerDown={(event) => {
               event.stopPropagation();
@@ -1552,11 +1790,12 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
               className="graph-floating-label"
               value={label.text}
               rows={labelRows}
-              wrap="off"
+              wrap="soft"
               spellCheck="false"
               style={{
                 color: label.color,
                 fontSize: `${label.fontSize}px`,
+                height: `${labelHeight}px`,
                 textShadow: label.color === '#ffffff'
                   ? '0 1px 3px rgba(0, 0, 0, 0.72)'
                   : '0 1px 2px rgba(255, 255, 255, 0.38)'
@@ -1577,19 +1816,23 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
             />
             {isSelected && (
               <>
-                <button
-                  className="label-handle move"
-                  type="button"
-                  title="이동"
-                  aria-label="텍스트 이동"
-                  data-label-id={label.id}
-                  onPointerDown={(event) => startLabelAction(event, label, 'move')}
-                  onPointerMove={handleLabelActionMove}
-                  onPointerUp={endLabelAction}
-                  onPointerCancel={endLabelAction}
-                >
-                  <Move size={13} aria-hidden="true" />
-                </button>
+                <span
+                  className="label-selection-box"
+                  style={{ inset: `-${getLabelSelectionInset(label.fontSize)}px` }}
+                  aria-hidden="true"
+                />
+                {LABEL_BORDER_MOVE_AREAS.map((area) => (
+                  <span
+                    key={area}
+                    className={`label-border-move-hit ${area}`}
+                    title="이동"
+                    aria-hidden="true"
+                    data-label-id={label.id}
+                    onPointerDown={(event) => startLabelAction(event, displayLabel, 'move')}
+                    onPointerUp={endLabelAction}
+                    onPointerCancel={endLabelAction}
+                  />
+                ))}
                 <div className="label-color-tools" aria-label="텍스트 색">
                   {LABEL_COLORS.map((color) => (
                     <button
@@ -1610,12 +1853,24 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
                   title="크기 변경"
                   aria-label="텍스트 크기 변경"
                   data-label-id={label.id}
-                  onPointerDown={(event) => startLabelAction(event, label, 'resize')}
-                  onPointerMove={handleLabelActionMove}
+                  onPointerDown={(event) => startLabelAction(event, displayLabel, 'resize')}
                   onPointerUp={endLabelAction}
                   onPointerCancel={endLabelAction}
                 >
                   <Maximize2 size={12} aria-hidden="true" />
+                </button>
+                <button
+                  className="label-handle delete"
+                  type="button"
+                  title="글자 지우기"
+                  aria-label="텍스트 지우기"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onLabelRemove(label.id);
+                  }}
+                >
+                  <Trash2 size={12} aria-hidden="true" />
                 </button>
               </>
             )}
@@ -2195,7 +2450,7 @@ function packGraphForShare(graph) {
   const dividers = sanitizeDividers(Array.isArray(graph.dividers) ? graph.dividers : []);
   const fillPayload = packFillsForShare(graph.fills, dividers);
   const labelPayload = packLabelsForShare(graph.labels);
-  const mode = GRAPH_MODE_CODES[graph.mode] || GRAPH_MODE_CODES.divide;
+  const mode = GRAPH_MODE_CODES[normalizeStoredGraphMode(graph.mode)] || GRAPH_MODE_CODES.divide;
   const activeColor = graph.activeColor || GRAPH_COLORS[0];
 
   if (type === 'pie') packed.t = 'p';

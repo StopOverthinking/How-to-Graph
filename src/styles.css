@@ -140,8 +140,7 @@ h1 {
 }
 
 .tool-rail,
-.panel-block,
-.label-editor {
+.panel-block {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.94);
@@ -933,7 +932,7 @@ textarea.text-input:focus {
 
 .graph-action-row {
   display: grid;
-  grid-template-columns: repeat(3, 40px);
+  grid-template-columns: repeat(2, 40px);
   grid-gap: 8px;
   justify-content: end;
   margin: 8px 0 10px;
@@ -1061,17 +1060,14 @@ textarea.text-input:focus {
   z-index: 3;
   min-width: 40px;
   transform: translate(-50%, -50%);
-}
-
-.graph-label-frame.is-selected {
-  outline: 1px dashed rgba(31, 45, 61, 0.42);
-  outline-offset: 6px;
+  will-change: left, top, width, height;
 }
 
 .graph-floating-label {
   display: block;
   width: 100%;
-  min-height: 26px;
+  height: 100%;
+  min-height: 1.58em;
   margin: 0;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -1084,17 +1080,72 @@ textarea.text-input:focus {
   font-weight: 900;
   line-height: 1.18;
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.38);
-  white-space: pre;
-  word-break: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .graph-floating-label:focus {
   background: rgba(255, 255, 255, 0.78);
 }
 
+.label-selection-box {
+  position: absolute;
+  border: 1px dashed rgba(31, 45, 61, 0.42);
+  border-radius: 8px;
+  pointer-events: none;
+  will-change: inset;
+}
+
+.label-border-move-hit {
+  position: absolute;
+  z-index: 4;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  appearance: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.label-border-move-hit:active {
+  cursor: grabbing;
+}
+
+.label-border-move-hit.top,
+.label-border-move-hit.bottom {
+  left: calc(-1 * var(--label-selection-inset, 6px) - 4px);
+  right: calc(-1 * var(--label-selection-inset, 6px) - 4px);
+  height: calc(var(--label-selection-inset, 6px) + 8px);
+}
+
+.label-border-move-hit.top {
+  top: calc(-1 * var(--label-selection-inset, 6px) - 4px);
+}
+
+.label-border-move-hit.bottom {
+  bottom: calc(-1 * var(--label-selection-inset, 6px) - 4px);
+}
+
+.label-border-move-hit.left,
+.label-border-move-hit.right {
+  top: 0;
+  bottom: 0;
+  width: calc(var(--label-selection-inset, 6px) + 8px);
+}
+
+.label-border-move-hit.left {
+  left: calc(-1 * var(--label-selection-inset, 6px) - 4px);
+}
+
+.label-border-move-hit.right {
+  right: calc(-1 * var(--label-selection-inset, 6px) - 4px);
+}
+
 .label-handle,
 .label-color-button {
   position: absolute;
+  z-index: 5;
   border: 1px solid rgba(31, 45, 61, 0.18);
   background: #ffffff;
   color: var(--ink);
@@ -1109,12 +1160,8 @@ textarea.text-input:focus {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-}
-
-.label-handle.move {
-  left: -18px;
-  top: -18px;
-  cursor: grab;
+  touch-action: none;
+  will-change: left, right, top, bottom;
 }
 
 .label-handle.resize {
@@ -1123,13 +1170,21 @@ textarea.text-input:focus {
   cursor: nwse-resize;
 }
 
+.label-handle.delete {
+  right: -18px;
+  top: -18px;
+  color: #b33939;
+}
+
 .label-color-tools {
   position: absolute;
+  z-index: 5;
   left: 50%;
   bottom: -34px;
   display: flex;
   gap: 5px;
   transform: translateX(-50%);
+  will-change: left, bottom;
 }
 
 .label-color-button {
@@ -1147,24 +1202,6 @@ textarea.text-input:focus {
 .label-color-button.is-active {
   border-color: var(--teal);
   box-shadow: 0 0 0 3px rgba(43, 179, 163, 0.2);
-}
-
-.label-editor {
-  margin-top: 12px;
-  padding: 14px;
-}
-
-.empty-copy {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.label-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
-  grid-gap: 8px;
-  margin-top: 8px;
 }
 
 .dialog-backdrop {
