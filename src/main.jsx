@@ -12,13 +12,14 @@ import {
   ALargeSmall,
   ChevronLeft,
   ChevronRight,
-  Circle,
   Download,
   Eraser,
+  FileText,
   Grid3X3,
   Maximize2,
   Megaphone,
   MousePointer2,
+  PaintBucket,
   PenLine,
   PieChart,
   Plus,
@@ -26,7 +27,8 @@ import {
   Share2,
   Table2,
   Trash2,
-  Undo2
+  Undo2,
+  X
 } from 'lucide-react';
 import './styles.css';
 
@@ -42,19 +44,48 @@ const MAX_PLAN_ITEM_COUNT = 8;
 const MIN_PLAN_STEP = 1;
 const MAX_PLAN_STEP = 4;
 const GRAPH_COLORS = [
-  '#5ac8a8',
-  '#ffb84d',
-  '#ff6b6b',
-  '#4d96ff',
-  '#9b6bff',
-  '#7bd389',
-  '#f78fb3',
-  '#6c7a89',
-  '#f25f5c',
-  '#ffe066',
-  '#00b4d8',
-  '#8d6e63'
+  '#8fe6d2',
+  '#ffd37a',
+  '#ff9b9b',
+  '#8fc2ff',
+  '#c6a6ff',
+  '#a8e8b3',
+  '#ffb9d1',
+  '#a9b2bd',
+  '#fff08a',
+  '#7fdcf0',
+  '#bca39a'
 ];
+const GRAPH_ERASER_COLOR = '#ffffff';
+const GRAPH_COLOR_SHARE_PALETTE = [
+  '#8fe6d2',
+  '#ffd37a',
+  '#ff9b9b',
+  '#8fc2ff',
+  '#c6a6ff',
+  '#a8e8b3',
+  '#ffb9d1',
+  '#a9b2bd',
+  '#ff9b9b',
+  '#fff08a',
+  '#7fdcf0',
+  '#bca39a'
+];
+const GRAPH_COLOR_MIGRATIONS = {
+  '#5ac8a8': '#8fe6d2',
+  '#ffb84d': '#ffd37a',
+  '#ff6b6b': '#ff9b9b',
+  '#4d96ff': '#8fc2ff',
+  '#9b6bff': '#c6a6ff',
+  '#7bd389': '#a8e8b3',
+  '#f78fb3': '#ffb9d1',
+  '#6c7a89': '#a9b2bd',
+  '#f25f5c': '#ff9b9b',
+  '#ffe066': '#fff08a',
+  '#00b4d8': '#7fdcf0',
+  '#8d6e63': '#bca39a',
+  '#fff': GRAPH_ERASER_COLOR
+};
 const LABEL_TICK_STEPS_BY_SCALE = {
   1: 20,
   2: 20,
@@ -116,6 +147,16 @@ const GRAPH_HISTORY_LIMIT = 80;
 const BAR_GRAPH_VIEWBOX = { width: 100, height: 36 };
 const BAR_GRAPH_BOX = { left: 8, top: 10, width: 84, height: 14 };
 const PIE_GRAPH_CIRCLE = { cx: 50, cy: 50, radius: 38 };
+const PIE_MINOR_TICK_INNER_RADIUS = PIE_GRAPH_CIRCLE.radius + 1.2;
+const PIE_MINOR_TICK_OUTER_RADIUS = PIE_GRAPH_CIRCLE.radius + 4;
+const PIE_MAJOR_TICK_INNER_RADIUS = PIE_GRAPH_CIRCLE.radius + 0.9;
+const PIE_MAJOR_TICK_OUTER_RADIUS = PIE_GRAPH_CIRCLE.radius + 2.8;
+const PIE_TICK_LABEL_RADIUS = PIE_GRAPH_CIRCLE.radius + 7.5;
+const REPORT_IMAGE_WIDTH = 1600;
+const REPORT_IMAGE_HEIGHT = 1200;
+const REPORT_IMAGE_MARGIN = 72;
+const REPORT_IMAGE_LOGICAL_WIDTH = 760;
+const REPORT_IMAGE_FONT_FAMILY = 'Inter, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif';
 const chunkMemory = new Map();
 
 let idSeed = 1;
@@ -179,9 +220,9 @@ function normalizeLoadedState(raw) {
       type: raw.graph && raw.graph.type === 'pie' ? 'pie' : 'bar',
       scale: normalizeGraphScale(raw.graph && raw.graph.scale),
       mode: normalizeStoredGraphMode(raw.graph && raw.graph.mode),
-      activeColor: raw.graph && raw.graph.activeColor ? raw.graph.activeColor : fallback.graph.activeColor,
+      activeColor: normalizeGraphActiveColor(raw.graph && raw.graph.activeColor, fallback.graph.activeColor),
       dividers: raw.graph && Array.isArray(raw.graph.dividers) ? sanitizeDividers(raw.graph.dividers) : [],
-      fills: raw.graph && raw.graph.fills ? raw.graph.fills : {},
+      fills: raw.graph && raw.graph.fills ? cloneGraphFills(raw.graph.fills) : {},
       undoStack: sanitizeGraphUndoStack(raw.graph && raw.graph.undoStack),
       labels: sanitizeLabels(raw.graph && raw.graph.labels)
     }
@@ -319,9 +360,21 @@ function cloneGraphFills(fills) {
   const next = {};
   if (!fills || typeof fills !== 'object') return next;
   Object.entries(fills).forEach(([key, color]) => {
-    if (typeof key === 'string' && typeof color === 'string' && color) next[key] = color;
+    const normalizedColor = normalizeGraphColor(color);
+    if (typeof key === 'string' && normalizedColor && normalizedColor !== GRAPH_ERASER_COLOR) next[key] = normalizedColor;
   });
   return next;
+}
+
+function normalizeGraphColor(color) {
+  if (typeof color !== 'string' || !color) return '';
+  const normalized = color.trim().toLowerCase();
+  return GRAPH_COLOR_MIGRATIONS[normalized] || normalized;
+}
+
+function normalizeGraphActiveColor(color, fallback = GRAPH_COLORS[0]) {
+  const normalizedColor = normalizeGraphColor(color);
+  return normalizedColor || fallback;
 }
 
 function makeGraphUndoSnapshot(graph) {
@@ -546,6 +599,7 @@ function App() {
   const [presentationVisible, setPresentationVisible] = useState(false);
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -621,6 +675,7 @@ function App() {
               table={state.table}
               graph={state.graph}
               onChange={(patch) => patchState('graph', patch)}
+              onOpenReport={() => setReportOpen(true)}
             />
           )}
         </section>
@@ -631,6 +686,15 @@ function App() {
           state={state}
           onClose={() => setShareOpen(false)}
           onImport={applyLoadedState}
+        />
+      )}
+
+      {reportOpen && (
+        <ReportDialog
+          plan={state.plan}
+          table={state.table}
+          graph={state.graph}
+          onClose={() => setReportOpen(false)}
         />
       )}
 
@@ -1049,16 +1113,17 @@ function TableWorkspace({ plan, table, onTableChange }) {
   );
 }
 
-function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = false, compact = false }) {
+function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = false, compact = false, fitWidth = false }) {
   const tableClassName = [
     'manual-table',
     readOnly ? 'is-read-only' : '',
-    compact ? 'is-compact' : ''
+    compact ? 'is-compact' : '',
+    fitWidth ? 'is-fit-width' : ''
   ].filter(Boolean).join(' ');
 
   return (
     <div className="manual-table-wrap">
-      <table className={tableClassName} style={{ minWidth: `${Math.max(360, tableWidth * (compact ? 92 : 104))}px` }}>
+      <table className={tableClassName} style={{ minWidth: fitWidth ? '0px' : `${Math.max(360, tableWidth * (compact ? 92 : 104))}px` }}>
         <thead>
           <tr>
             {headerRow.map((cell, cellIndex) => (
@@ -1195,10 +1260,701 @@ function GraphScaleControl({ scale, onConfirm }) {
   );
 }
 
-function GraphWorkspace({ plan, table, graph, onChange }) {
+function ReportDialog({ plan, table, graph, onClose }) {
+  const [message, setMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+  const itemCount = getPlanItemCount(plan.items, table.headerRow);
+  const tableWidth = getTableWidthForItemCount(itemCount);
+  const headerRow = buildHeaderRow(plan.items, table.headerRow, tableWidth);
+  const rows = fitRows(table.rows, tableWidth);
+  const title = getReportTitle(plan, headerRow);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') onClose();
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  function saveReportImage() {
+    if (saving) return;
+    setSaving(true);
+    setMessage('');
+
+    try {
+      const image = makeReportImage({ title, headerRow, rows, tableWidth, graph });
+      saveReportImageFile(image)
+        .then((nextMessage) => {
+          if (nextMessage) setMessage(nextMessage);
+        })
+        .catch(() => setMessage('이미지를 저장하지 못했습니다.'))
+        .finally(() => setSaving(false));
+    } catch (error) {
+      setMessage('이미지를 만들지 못했습니다.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop report-backdrop" role="presentation">
+      <div className="report-dialog" role="dialog" aria-modal="true" aria-label="최종 보고서">
+        <div className="report-toolbar">
+          <button className="icon-text-button report-save-button" type="button" onClick={saveReportImage} disabled={saving}>
+            <Download size={18} aria-hidden="true" />
+            <span>{saving ? '준비 중' : '이미지 저장'}</span>
+          </button>
+          <button className="icon-button" type="button" onClick={onClose} title="닫기" aria-label="닫기">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <FinalReport
+          title={title}
+          headerRow={headerRow}
+          rows={rows}
+          tableWidth={tableWidth}
+          graph={graph}
+        />
+        {message && <p className="dialog-message report-message">{message}</p>}
+      </div>
+    </div>
+  );
+}
+
+function FinalReport({ title, headerRow, rows, tableWidth, graph }) {
+  return (
+    <section className="report-page" aria-label="최종 보고서 미리보기">
+      <h1 className="report-title">{title}</h1>
+      <div className="report-table-block">
+        <ManualTable
+          headerRow={headerRow}
+          rows={rows}
+          tableWidth={tableWidth}
+          readOnly
+          compact
+          fitWidth
+        />
+      </div>
+      <ReportGraph graph={graph} />
+    </section>
+  );
+}
+
+function ReportGraph({ graph }) {
+  const segments = getSegments(graph.dividers);
+  const graphClassName = `report-graph-frame is-${graph.type === 'pie' ? 'pie' : 'bar'}`;
+
+  return (
+    <div className={graphClassName} aria-label="보고서 그래프">
+      {graph.type === 'bar' ? (
+        <BarGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
+      ) : (
+        <PieGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
+      )}
+      {(Array.isArray(graph.labels) ? graph.labels : []).map((rawLabel) => {
+        const label = normalizeGraphLabel(rawLabel);
+        if (!label.text.trim()) return null;
+        const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, MAX_LABEL_WIDTH);
+        const labelHeight = getLabelBoxHeightForText(label.text, label.fontSize, labelWidth, null);
+        return (
+          <div
+            key={label.id}
+            className="graph-label-frame report-label-frame"
+            style={{
+              left: `clamp(${labelWidth / 2}px, ${label.x}%, calc(100% - ${labelWidth / 2}px))`,
+              top: `clamp(${labelHeight / 2}px, ${label.y}%, calc(100% - ${labelHeight / 2}px))`,
+              width: `${labelWidth}px`,
+              height: `${labelHeight}px`
+            }}
+          >
+            <div
+              className="graph-floating-label report-floating-label"
+              style={{
+                color: label.color,
+                fontSize: `${label.fontSize}px`,
+                height: `${labelHeight}px`,
+                textShadow: label.color === '#ffffff'
+                  ? '0 1px 3px rgba(0, 0, 0, 0.72)'
+                  : '0 1px 2px rgba(255, 255, 255, 0.38)'
+              }}
+            >
+              {label.text}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function getReportTitle(plan, headerRow) {
+  const title = plan && typeof plan.title === 'string' ? plan.title.trim() : '';
+  if (title) return title;
+  const firstItem = Array.isArray(headerRow)
+    ? headerRow.find((cell, index) => index > 0 && typeof cell === 'string' && !isTotalHeaderCell(cell) && cell.trim())
+    : '';
+  return firstItem ? `${firstItem} 그래프 보고서` : '최종 보고서';
+}
+
+function makeReportImage(report) {
+  const canvas = document.createElement('canvas');
+  canvas.width = REPORT_IMAGE_WIDTH;
+  canvas.height = REPORT_IMAGE_HEIGHT;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Canvas is not available.');
+
+  drawReportImage(context, report);
+  const dataUrl = canvas.toDataURL('image/png');
+  return {
+    dataUrl,
+    blob: dataUrlToBlob(dataUrl),
+    fileName: makeReportFileName(report.title),
+    title: report.title || '그래프 보고서'
+  };
+}
+
+function drawReportImage(context, report) {
+  const titleRect = {
+    x: REPORT_IMAGE_MARGIN,
+    y: 58,
+    width: REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2,
+    height: 92
+  };
+  const tableRect = {
+    x: REPORT_IMAGE_MARGIN,
+    y: 164,
+    width: REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2,
+    height: 186
+  };
+  const graphRect = {
+    x: REPORT_IMAGE_MARGIN,
+    y: 392,
+    width: REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2,
+    height: REPORT_IMAGE_HEIGHT - 392 - REPORT_IMAGE_MARGIN
+  };
+
+  context.save();
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, REPORT_IMAGE_WIDTH, REPORT_IMAGE_HEIGHT);
+  drawCanvasTextBox(context, report.title || '최종 보고서', titleRect, {
+    align: 'left',
+    fontSize: 48,
+    minFontSize: 30,
+    weight: 900,
+    maxLines: 2
+  });
+  drawReportImageTable(context, report.headerRow, report.rows, tableRect);
+  drawReportImageGraph(context, report.graph, graphRect);
+  context.restore();
+}
+
+function drawReportImageTable(context, headerRow, rows, rect) {
+  const tableRows = [headerRow].concat(rows);
+  const rowHeight = rect.height / tableRows.length;
+  const columnWidths = getReportImageColumnWidths(headerRow.length, rect.width);
+
+  context.save();
+  context.lineWidth = 2;
+  context.strokeStyle = '#111111';
+
+  tableRows.forEach((row, rowIndex) => {
+    let cellX = rect.x;
+    const cellY = rect.y + rowIndex * rowHeight;
+    columnWidths.forEach((cellWidth, cellIndex) => {
+      const isHeader = rowIndex === 0;
+      const isLabelCell = cellIndex === 0 || (isHeader && cellIndex === columnWidths.length - 1);
+      context.fillStyle = isHeader || isLabelCell ? '#f3f6f4' : '#ffffff';
+      context.fillRect(cellX, cellY, cellWidth, rowHeight);
+      context.strokeRect(cellX, cellY, cellWidth, rowHeight);
+      drawCanvasTextBox(context, row[cellIndex] || '', {
+        x: cellX + 9,
+        y: cellY + 6,
+        width: Math.max(1, cellWidth - 18),
+        height: Math.max(1, rowHeight - 12)
+      }, {
+        fontSize: isHeader || cellIndex === 0 ? 25 : 23,
+        minFontSize: 14,
+        weight: 900,
+        maxLines: 2
+      });
+      cellX += cellWidth;
+    });
+  });
+
+  context.restore();
+}
+
+function getReportImageColumnWidths(columnCount, totalWidth) {
+  if (columnCount <= 0) return [];
+  if (columnCount <= 2) return Array(columnCount).fill(totalWidth / columnCount);
+
+  const scale = totalWidth / (REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2);
+  const labelWidth = 176 * scale;
+  const totalColumnWidth = 134 * scale;
+  const itemWidth = (totalWidth - labelWidth - totalColumnWidth) / (columnCount - 2);
+  return [labelWidth]
+    .concat(Array(columnCount - 2).fill(itemWidth))
+    .concat(totalColumnWidth);
+}
+
+function drawReportImageGraph(context, graph, rect) {
+  const safeGraph = graph || {};
+  const segments = getSegments(safeGraph.dividers);
+  context.save();
+  context.fillStyle = '#ffffff';
+  context.fillRect(rect.x, rect.y, rect.width, rect.height);
+  if (safeGraph.type === 'bar') {
+    drawReportBarImage(context, safeGraph, segments, rect);
+  } else {
+    drawReportPieImage(context, safeGraph, segments, rect);
+  }
+  drawReportImageLabels(context, safeGraph, rect);
+  context.restore();
+}
+
+function drawReportBarImage(context, graph, segments, rect) {
+  const scale = Math.min((rect.width * 0.96) / BAR_GRAPH_VIEWBOX.width, (rect.height * 0.78) / BAR_GRAPH_VIEWBOX.height);
+  const originX = rect.x + (rect.width - BAR_GRAPH_VIEWBOX.width * scale) / 2;
+  const originY = rect.y + (rect.height - BAR_GRAPH_VIEWBOX.height * scale) / 2;
+  const viewX = (value) => originX + value * scale;
+  const viewY = (value) => originY + value * scale;
+  const box = {
+    x: viewX(BAR_GRAPH_BOX.left),
+    y: viewY(BAR_GRAPH_BOX.top),
+    width: BAR_GRAPH_BOX.width * scale,
+    height: BAR_GRAPH_BOX.height * scale,
+    radius: 2.2 * scale
+  };
+  const barX = (percent) => viewX(barPercentX(percent));
+  const scaleValue = normalizeGraphScale(graph.scale);
+  const labelTicks = makePercentLabelTicks(scaleValue, 'bar');
+  const minorTicks = makeGraphTicks(scaleValue, true).filter((tick) => !labelTicks.includes(tick));
+
+  context.save();
+  context.fillStyle = '#ffffff';
+  makeCanvasRoundRectPath(context, box.x, box.y, box.width, box.height, box.radius);
+  context.fill();
+  context.clip();
+  segments.forEach((segment) => {
+    const color = graph.fills && graph.fills[segment.key];
+    if (!isVisibleReportFill(color)) return;
+    context.fillStyle = color;
+    context.fillRect(barX(segment.start), box.y, (segment.end - segment.start) * (BAR_GRAPH_BOX.width / 100) * scale, box.height);
+  });
+  context.restore();
+
+  drawCanvasRoundRect(context, box.x, box.y, box.width, box.height, box.radius, null, '#1f2d3d', 2.4);
+  minorTicks.forEach((tick) => {
+    const x = barX(tick);
+    drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top - 2.8), x, viewY(BAR_GRAPH_BOX.top - 0.7), '#aebaca', 1.6);
+    drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 0.7), x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 2.8), '#aebaca', 1.6);
+  });
+  labelTicks.forEach((tick) => {
+    const x = barX(tick);
+    drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top - 3.6), x, viewY(BAR_GRAPH_BOX.top - 0.6), '#52606f', 2);
+    drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 0.6), x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 4.2), '#52606f', 2);
+    setReportCanvasFont(context, 3.1 * scale, 900);
+    context.fillStyle = '#52606f';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(`${tick}%`, x, viewY(33));
+  });
+  sanitizeDividers(graph.dividers).forEach((divider) => {
+    drawCanvasLine(context, barX(divider), box.y, barX(divider), box.y + box.height, '#1f2d3d', 2.4);
+  });
+}
+
+function drawReportPieImage(context, graph, segments, rect) {
+  const scale = Math.min(rect.width * 0.58, rect.height * 0.92) / 100;
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+  const radius = PIE_GRAPH_CIRCLE.radius * scale;
+  const scaleValue = normalizeGraphScale(graph.scale);
+  const labelTicks = makePercentLabelTicks(scaleValue, 'pie');
+  const minorTicks = makeGraphTicks(scaleValue).filter((tick) => !labelTicks.includes(tick));
+
+  drawCanvasCircle(context, centerX, centerY, radius, '#ffffff', '#1f2d3d', 2.4);
+  segments.forEach((segment) => {
+    const color = graph.fills && graph.fills[segment.key];
+    if (!isVisibleReportFill(color)) return;
+    if (segment.start === 0 && segment.end === 100) {
+      drawCanvasCircle(context, centerX, centerY, radius, color, null, 0);
+      return;
+    }
+    drawCanvasPieSegment(context, centerX, centerY, radius, segment.start, segment.end, color);
+  });
+  drawCanvasCircle(context, centerX, centerY, radius, null, '#1f2d3d', 2.4);
+
+  const zeroPoint = getReportPolarPoint(centerX, centerY, radius, 0);
+  drawCanvasLine(context, centerX, centerY, zeroPoint.x, zeroPoint.y, '#1f2d3d', 2.4);
+  minorTicks.forEach((tick) => {
+    const inner = getReportPolarPoint(centerX, centerY, PIE_MINOR_TICK_INNER_RADIUS * scale, tick);
+    const outer = getReportPolarPoint(centerX, centerY, PIE_MINOR_TICK_OUTER_RADIUS * scale, tick);
+    drawCanvasLine(context, inner.x, inner.y, outer.x, outer.y, '#aebaca', 1.6);
+  });
+  labelTicks.forEach((tick) => {
+    const inner = getReportPolarPoint(centerX, centerY, PIE_MAJOR_TICK_INNER_RADIUS * scale, tick);
+    const outer = getReportPolarPoint(centerX, centerY, PIE_MAJOR_TICK_OUTER_RADIUS * scale, tick);
+    const label = getReportPolarPoint(centerX, centerY, PIE_TICK_LABEL_RADIUS * scale, tick);
+    drawCanvasLine(context, inner.x, inner.y, outer.x, outer.y, '#52606f', 2);
+    setReportCanvasFont(context, 4 * scale, 900);
+    context.fillStyle = '#52606f';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(`${tick}%`, label.x, label.y);
+  });
+  sanitizeDividers(graph.dividers).forEach((divider) => {
+    const point = getReportPolarPoint(centerX, centerY, radius, divider);
+    drawCanvasLine(context, centerX, centerY, point.x, point.y, '#1f2d3d', 2.4);
+  });
+}
+
+function drawReportImageLabels(context, graph, rect) {
+  const labelScale = rect.width / REPORT_IMAGE_LOGICAL_WIDTH;
+  const labels = Array.isArray(graph.labels) ? graph.labels : [];
+  labels.forEach((rawLabel) => {
+    const label = normalizeGraphLabel(rawLabel);
+    if (!label.text.trim()) return;
+
+    const sourceWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, MAX_LABEL_WIDTH);
+    const sourceHeight = getLabelBoxHeightForText(label.text, label.fontSize, sourceWidth, null);
+    const labelWidth = sourceWidth * labelScale;
+    const labelHeight = sourceHeight * labelScale;
+    const centerX = rect.x + rect.width * (label.x / 100);
+    const centerY = rect.y + rect.height * (label.y / 100);
+    const left = clamp(centerX - labelWidth / 2, rect.x, rect.x + rect.width - labelWidth);
+    const top = clamp(centerY - labelHeight / 2, rect.y, rect.y + rect.height - labelHeight);
+
+    context.save();
+    context.shadowColor = label.color === '#ffffff' ? 'rgba(0, 0, 0, 0.72)' : 'rgba(255, 255, 255, 0.72)';
+    context.shadowBlur = label.color === '#ffffff' ? 5 : 3;
+    context.shadowOffsetY = 2;
+    drawCanvasTextBox(context, label.text, {
+      x: left,
+      y: top,
+      width: labelWidth,
+      height: labelHeight
+    }, {
+      color: label.color,
+      fontSize: label.fontSize * labelScale,
+      minFontSize: Math.max(12, MIN_LABEL_FONT_SIZE * labelScale),
+      weight: 900,
+      lineHeight: LABEL_LINE_HEIGHT,
+      maxLines: Math.max(1, Math.floor(labelHeight / (label.fontSize * labelScale * LABEL_LINE_HEIGHT)))
+    });
+    context.restore();
+  });
+}
+
+function isVisibleReportFill(color) {
+  return typeof color === 'string' && color && color !== 'transparent' && color !== 'rgba(255,255,255,0)';
+}
+
+function drawCanvasTextBox(context, text, rect, options = {}) {
+  const cleanText = String(text || '').trim();
+  if (!cleanText) return;
+
+  const maxFontSize = options.fontSize || 24;
+  const minFontSize = options.minFontSize || Math.min(14, maxFontSize);
+  const weight = options.weight || 800;
+  const align = options.align || 'center';
+  const lineHeightRatio = options.lineHeight || 1.18;
+  const explicitMaxLines = options.maxLines || null;
+  let fontSize = maxFontSize;
+  let lines = [];
+
+  for (; fontSize >= minFontSize; fontSize -= 1) {
+    setReportCanvasFont(context, fontSize, weight);
+    const lineHeight = fontSize * lineHeightRatio;
+    const maxLines = explicitMaxLines || Math.max(1, Math.floor(rect.height / lineHeight));
+    const wrapped = wrapCanvasText(context, cleanText, rect.width);
+    if (wrapped.length <= maxLines && wrapped.length * lineHeight <= rect.height + 0.5) {
+      lines = wrapped;
+      break;
+    }
+  }
+
+  fontSize = Math.max(fontSize, minFontSize);
+  setReportCanvasFont(context, fontSize, weight);
+  const lineHeight = fontSize * lineHeightRatio;
+  const maxLines = explicitMaxLines || Math.max(1, Math.floor(rect.height / lineHeight));
+  if (!lines.length) lines = truncateCanvasLines(context, wrapCanvasText(context, cleanText, rect.width), maxLines, rect.width);
+
+  context.save();
+  context.beginPath();
+  context.rect(rect.x, rect.y, rect.width, rect.height);
+  context.clip();
+  context.fillStyle = options.color || '#111111';
+  context.textAlign = align;
+  context.textBaseline = 'middle';
+
+  const textX = align === 'left' ? rect.x : align === 'right' ? rect.x + rect.width : rect.x + rect.width / 2;
+  const totalHeight = lines.length * lineHeight;
+  const firstY = rect.y + (rect.height - totalHeight) / 2 + lineHeight / 2;
+  lines.forEach((line, index) => {
+    context.fillText(line, textX, firstY + index * lineHeight);
+  });
+  context.restore();
+}
+
+function wrapCanvasText(context, text, maxWidth) {
+  const lines = [];
+  String(text || '').replace(/\r/g, '').split('\n').forEach((paragraph) => {
+    if (!paragraph) {
+      lines.push('');
+      return;
+    }
+
+    let line = '';
+    makeCanvasWrapTokens(paragraph).forEach((token) => {
+      const nextToken = line ? token : token.trimStart();
+      if (!nextToken) return;
+      const candidate = `${line}${nextToken}`;
+      if (context.measureText(candidate).width <= maxWidth) {
+        line = candidate;
+        return;
+      }
+
+      if (line) {
+        lines.push(line.trimEnd());
+        line = nextToken.trimStart();
+      }
+
+      if (context.measureText(line).width > maxWidth) {
+        const brokenLines = breakCanvasToken(context, line, maxWidth);
+        lines.push(...brokenLines.slice(0, -1));
+        line = brokenLines[brokenLines.length - 1] || '';
+      }
+    });
+
+    if (line) lines.push(line.trimEnd());
+  });
+  return lines.length ? lines : [''];
+}
+
+function makeCanvasWrapTokens(text) {
+  const wordTokens = text.split(/(\s+)/).filter(Boolean);
+  return wordTokens.length > 1 ? wordTokens : Array.from(text);
+}
+
+function breakCanvasToken(context, text, maxWidth) {
+  const lines = [];
+  let line = '';
+  Array.from(text).forEach((character) => {
+    const candidate = `${line}${character}`;
+    if (!line || context.measureText(candidate).width <= maxWidth) {
+      line = candidate;
+      return;
+    }
+    lines.push(line);
+    line = character;
+  });
+  if (line) lines.push(line);
+  return lines;
+}
+
+function truncateCanvasLines(context, lines, maxLines, maxWidth) {
+  if (lines.length <= maxLines) return lines;
+  const nextLines = lines.slice(0, maxLines);
+  nextLines[maxLines - 1] = fitCanvasTextWithEllipsis(context, nextLines[maxLines - 1], maxWidth);
+  return nextLines;
+}
+
+function fitCanvasTextWithEllipsis(context, text, maxWidth) {
+  const ellipsis = '...';
+  const characters = Array.from(String(text || '').trimEnd());
+  while (characters.length && context.measureText(`${characters.join('')}${ellipsis}`).width > maxWidth) {
+    characters.pop();
+  }
+  return characters.length ? `${characters.join('')}${ellipsis}` : ellipsis;
+}
+
+function setReportCanvasFont(context, fontSize, weight) {
+  context.font = `${weight} ${fontSize}px ${REPORT_IMAGE_FONT_FAMILY}`;
+}
+
+function drawCanvasLine(context, x1, y1, x2, y2, color, lineWidth) {
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = lineWidth;
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+  context.restore();
+}
+
+function drawCanvasCircle(context, x, y, radius, fill, stroke, lineWidth) {
+  context.save();
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  if (fill) {
+    context.fillStyle = fill;
+    context.fill();
+  }
+  if (stroke && lineWidth) {
+    context.strokeStyle = stroke;
+    context.lineWidth = lineWidth;
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawCanvasPieSegment(context, x, y, radius, start, end, fill) {
+  context.save();
+  context.fillStyle = fill;
+  context.beginPath();
+  context.moveTo(x, y);
+  context.arc(x, y, radius, percentToCanvasAngle(start), percentToCanvasAngle(end));
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+
+function percentToCanvasAngle(percent) {
+  return percent / 100 * Math.PI * 2 - Math.PI / 2;
+}
+
+function getReportPolarPoint(cx, cy, radius, percent) {
+  const angle = percentToCanvasAngle(percent);
+  return {
+    x: cx + radius * Math.cos(angle),
+    y: cy + radius * Math.sin(angle)
+  };
+}
+
+function drawCanvasRoundRect(context, x, y, width, height, radius, fill, stroke, lineWidth) {
+  context.save();
+  makeCanvasRoundRectPath(context, x, y, width, height, radius);
+  if (fill) {
+    context.fillStyle = fill;
+    context.fill();
+  }
+  if (stroke && lineWidth) {
+    context.strokeStyle = stroke;
+    context.lineWidth = lineWidth;
+    context.stroke();
+  }
+  context.restore();
+}
+
+function makeCanvasRoundRectPath(context, x, y, width, height, radius) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+  context.closePath();
+}
+
+function makeReportFileName(title) {
+  const baseName = String(title || '그래프-보고서')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, '-')
+    .slice(0, 42) || 'graph-report';
+  return `${baseName}.png`;
+}
+
+function saveReportImageFile(image) {
+  const file = makeReportImageFile(image.blob, image.fileName);
+  if (file && isIosSafari() && canShareReportFile(file)) {
+    return navigator.share({ files: [file], title: image.title })
+      .then(() => '이미지 저장 화면을 열었습니다.')
+      .catch((error) => {
+        if (isAbortError(error)) return '저장을 취소했습니다.';
+        return fallbackSaveReportImage(image.dataUrl, image.fileName);
+      });
+  }
+  return Promise.resolve(fallbackSaveReportImage(image.dataUrl, image.fileName));
+}
+
+function makeReportImageFile(blob, fileName) {
+  try {
+    return typeof File === 'function' ? new File([blob], fileName, { type: 'image/png' }) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function canShareReportFile(file) {
+  return typeof navigator !== 'undefined'
+    && typeof navigator.share === 'function'
+    && typeof navigator.canShare === 'function'
+    && navigator.canShare({ files: [file] });
+}
+
+function fallbackSaveReportImage(dataUrl, fileName) {
+  if (isIosSafari()) {
+    if (openReportImageWindow(dataUrl, fileName)) return '이미지를 새 탭에 열었습니다.';
+    if (downloadDataUrl(dataUrl, fileName)) return '이미지 파일을 저장했습니다.';
+    return '이미지를 열지 못했습니다.';
+  }
+
+  const opened = openReportImageWindow(dataUrl, fileName);
+  const downloaded = downloadDataUrl(dataUrl, fileName);
+  if (opened && downloaded) return '이미지 탭을 열고 다운로드를 시작했습니다.';
+  if (opened) return '이미지를 새 탭에 열었습니다.';
+  if (downloaded) return '이미지 파일을 저장했습니다.';
+  return '이미지를 열지 못했습니다.';
+}
+
+function downloadDataUrl(dataUrl, fileName) {
+  if (typeof document === 'undefined') return false;
+  const link = document.createElement('a');
+  if (!('download' in link)) return false;
+  link.href = dataUrl;
+  link.download = fileName;
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  return true;
+}
+
+function openReportImageWindow(dataUrl, fileName) {
+  void fileName;
+  if (typeof window === 'undefined') return false;
+  return !!window.open(dataUrl, '_blank');
+}
+
+function dataUrlToBlob(dataUrl) {
+  const parts = dataUrl.split(',');
+  const mimeMatch = parts[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+  const binary = atob(parts[1] || '');
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+function isAbortError(error) {
+  return error && error.name === 'AbortError';
+}
+
+function isIosSafari() {
+  if (typeof navigator === 'undefined') return false;
+  const userAgent = navigator.userAgent || '';
+  const platform = navigator.platform || '';
+  const isAppleMobile = /iP(ad|hone|od)/.test(userAgent) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isOtherIosBrowser = /CriOS|FxiOS|EdgiOS|OPiOS/.test(userAgent);
+  return isAppleMobile && /WebKit/.test(userAgent) && /Safari/.test(userAgent) && !isOtherIosBrowser;
+}
+
+function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
   const canvasRef = useRef(null);
   const segments = getSegments(graph.dividers);
-  const coloredSegmentCount = getColoredSegmentCount(segments, graph.fills);
   const canUndoGraphAction = Array.isArray(graph.undoStack) && graph.undoStack.length > 0;
 
   function setGraph(patch) {
@@ -1229,7 +1985,13 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
         const currentSegments = getSegments(currentGraph.dividers);
         const segment = findSegmentFromPoint(currentGraph, currentSegments, point);
         if (!segment) return {};
-        const activeColor = currentGraph.activeColor || GRAPH_COLORS[0];
+        const activeColor = normalizeGraphActiveColor(currentGraph.activeColor);
+        if (activeColor === GRAPH_ERASER_COLOR) {
+          if (!currentGraph.fills || !currentGraph.fills[segment.key]) return {};
+          const fills = cloneGraphFills(currentGraph.fills);
+          delete fills[segment.key];
+          return withGraphUndo(currentGraph, { fills });
+        }
         if (currentGraph.fills && currentGraph.fills[segment.key] === activeColor) return {};
         return withGraphUndo(currentGraph, {
           fills: { ...cloneGraphFills(currentGraph.fills), [segment.key]: activeColor }
@@ -1262,36 +2024,6 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
         fills: { ...previousSnapshot.fills },
         undoStack: undoStack.slice(0, -1)
       };
-    });
-  }
-
-  function fillSegment(segment) {
-    if (!segment) return;
-    setGraph((currentGraph) => {
-      const activeColor = currentGraph.activeColor || GRAPH_COLORS[0];
-      if (currentGraph.fills && currentGraph.fills[segment.key] === activeColor) return {};
-      return withGraphUndo(currentGraph, {
-        fills: { ...cloneGraphFills(currentGraph.fills), [segment.key]: activeColor }
-      });
-    });
-  }
-
-  function clearSegment(segment) {
-    if (!segment) return;
-    setGraph((currentGraph) => {
-      if (!currentGraph.fills || !currentGraph.fills[segment.key]) return {};
-      const fills = cloneGraphFills(currentGraph.fills);
-      delete fills[segment.key];
-      return withGraphUndo(currentGraph, { fills });
-    });
-  }
-
-  function clearFills() {
-    if (!coloredSegmentCount) return;
-    setGraph((currentGraph) => {
-      const currentSegments = getSegments(currentGraph.dividers);
-      if (!getColoredSegmentCount(currentSegments, currentGraph.fills)) return {};
-      return withGraphUndo(currentGraph, { fills: {} });
     });
   }
 
@@ -1334,44 +2066,61 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
             onChange={(value) => setGraph({ mode: value })}
             items={[
               { value: 'divide', label: '나누기', icon: PenLine },
+              { value: 'paint', label: '색칠하기', icon: PaintBucket },
               { value: 'text', label: '글자', icon: ALargeSmall }
             ]}
           />
 
-          <div className="swatch-block graph-swatches" aria-label="그래프 색">
-            {GRAPH_COLORS.map((color) => (
+          {graph.mode === 'paint' && (
+            <div className="swatch-block graph-swatches" aria-label="그래프 색">
+              {GRAPH_COLORS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  className={`swatch ${graph.activeColor === color ? 'is-active' : ''}`}
+                  style={{ backgroundColor: color }}
+                  onClick={() => setGraph({ activeColor: color })}
+                  title="색 선택"
+                  aria-label="색 선택"
+                />
+              ))}
               <button
-                key={color}
                 type="button"
-                className={`swatch ${graph.activeColor === color ? 'is-active' : ''}`}
-                style={{ backgroundColor: color }}
-                onClick={() => setGraph({ activeColor: color, mode: 'paint' })}
-                title="이 색으로 색칠하기"
-                aria-label="이 색으로 색칠하기"
-              />
-            ))}
-          </div>
-
-          <GraphManualPanel
-            graph={graph}
-            segments={segments}
-            onFillSegment={fillSegment}
-            onClearSegment={clearSegment}
-          />
+                className={`swatch is-eraser ${graph.activeColor === GRAPH_ERASER_COLOR ? 'is-active' : ''}`}
+                style={{ backgroundColor: GRAPH_ERASER_COLOR }}
+                onClick={() => setGraph({ activeColor: GRAPH_ERASER_COLOR })}
+                title="색 지우개"
+                aria-label="색 지우개"
+              >
+                <Eraser size={14} aria-hidden="true" />
+              </button>
+            </div>
+          )}
 
           <div className="graph-action-row">
-            <button className="icon-button" type="button" onClick={undoGraphAction} disabled={!canUndoGraphAction} title="실행 취소" aria-label="실행 취소">
+            <button className="icon-text-button secondary graph-action-button" type="button" onClick={undoGraphAction} disabled={!canUndoGraphAction} title="실행 취소">
               <Undo2 size={17} aria-hidden="true" />
+              <span>실행 취소</span>
             </button>
-            <button className="icon-button" type="button" onClick={clearFills} disabled={!coloredSegmentCount} title="색 모두 지우기" aria-label="색 모두 지우기">
+            <button className="icon-text-button secondary graph-action-button" type="button" onClick={resetGraph} title="그래프 지우기">
               <Eraser size={17} aria-hidden="true" />
+              <span>초기화</span>
             </button>
           </div>
 
-          <button className="icon-text-button secondary" type="button" onClick={resetGraph}>
-            <Eraser size={18} aria-hidden="true" />
-            <span>그래프 지우기</span>
+          <button className="icon-text-button graph-report-button" type="button" onClick={onOpenReport}>
+            <FileText size={18} aria-hidden="true" />
+            <span>보고서 이미지</span>
           </button>
+          <a
+            className="icon-text-button graph-share-button"
+            href="https://b.tkbell.co.kr/tkboard/woi/1277778/nk4z42ORf8.do?pageSeq=2431822"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Share2 size={18} aria-hidden="true" />
+            <span>공유하기</span>
+          </a>
         </aside>
 
         <div className="graph-main">
@@ -1385,36 +2134,6 @@ function GraphWorkspace({ plan, table, graph, onChange }) {
           />
 
         </div>
-      </div>
-    </div>
-  );
-}
-
-function GraphManualPanel({ graph, segments, onFillSegment, onClearSegment }) {
-  return (
-    <div className="graph-manual-panel">
-      <div className="graph-segment-list" aria-label="구간 직접 색칠하기">
-        {segments.map((segment) => {
-          const color = graph.fills[segment.key];
-          return (
-            <div className="graph-segment-row" key={segment.key}>
-              <button className="graph-segment-fill" type="button" onClick={() => onFillSegment(segment)}>
-                <span className="segment-color-dot" style={{ backgroundColor: color || '#ffffff' }} />
-                <span>{formatSegmentRange(segment)}</span>
-              </button>
-              <button
-                className="segment-clear-button"
-                type="button"
-                onClick={() => onClearSegment(segment)}
-                disabled={!color}
-                title={`${formatSegmentRange(segment)} 색 지우기`}
-                aria-label={`${formatSegmentRange(segment)} 색 지우기`}
-              >
-                <Eraser size={14} aria-hidden="true" />
-              </button>
-            </div>
-          );
-        })}
       </div>
     </div>
   );
@@ -1973,8 +2692,8 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
       <circle cx="50" cy="50" r="38" fill="none" stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
       <line className="pie-zero-divider" x1="50" y1="50" x2={polarPoint(50, 50, 38, 0).x} y2={polarPoint(50, 50, 38, 0).y} stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
       {minorTicks.map((tick) => {
-        const inner = polarPoint(50, 50, 39.2, tick);
-        const outer = polarPoint(50, 50, 42, tick);
+        const inner = polarPoint(50, 50, PIE_MINOR_TICK_INNER_RADIUS, tick);
+        const outer = polarPoint(50, 50, PIE_MINOR_TICK_OUTER_RADIUS, tick);
         return (
           <g key={tick}>
             <line className="graph-minor-tick" x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} />
@@ -1982,13 +2701,13 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
         );
       })}
       {labelTicks.map((tick) => {
-        const inner = polarPoint(50, 50, 38.9, tick);
-        const outer = polarPoint(50, 50, 43, tick);
+        const inner = polarPoint(50, 50, PIE_MAJOR_TICK_INNER_RADIUS, tick);
+        const outer = polarPoint(50, 50, PIE_MAJOR_TICK_OUTER_RADIUS, tick);
         const label = getPieTickLabelPosition(tick);
         return (
           <g key={`label-${tick}`}>
             <line className="graph-major-tick" x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} />
-            <text className="graph-tick-label" x={label.x} y={label.y} textAnchor={label.textAnchor} fontSize="4">{tick}%</text>
+            <text className="graph-tick-label" x={label.x} y={label.y} textAnchor={label.textAnchor} dominantBaseline="middle" fontSize="4">{tick}%</text>
           </g>
         );
       })}
@@ -2200,10 +2919,6 @@ function formatSegmentRange(segment) {
   return `${segment.start}-${segment.end}%`;
 }
 
-function getColoredSegmentCount(segments, fills) {
-  return segments.reduce((count, segment) => count + (fills && fills[segment.key] ? 1 : 0), 0);
-}
-
 function getPointReadout(graph, segments, point) {
   if (graph.mode === 'divide') return `${getSnappedDividerValue(graph, point)}%`;
   const segment = findSegmentFromPoint(graph, segments, point);
@@ -2228,9 +2943,8 @@ function polarPoint(cx, cy, radius, percent) {
 }
 
 function getPieTickLabelPosition(tick) {
-  if (tick === 0) return { x: 50, y: 7.2, textAnchor: 'middle' };
-  const point = polarPoint(50, 50, 43.5, tick);
-  return { x: point.x, y: point.y + 1.4, textAnchor: 'middle' };
+  const point = polarPoint(50, 50, PIE_TICK_LABEL_RADIUS, tick);
+  return { x: point.x, y: point.y, textAnchor: 'middle' };
 }
 
 function sectorPath(cx, cy, radius, start, end) {
@@ -2451,7 +3165,7 @@ function packGraphForShare(graph) {
   const fillPayload = packFillsForShare(graph.fills, dividers);
   const labelPayload = packLabelsForShare(graph.labels);
   const mode = GRAPH_MODE_CODES[normalizeStoredGraphMode(graph.mode)] || GRAPH_MODE_CODES.divide;
-  const activeColor = graph.activeColor || GRAPH_COLORS[0];
+  const activeColor = normalizeGraphActiveColor(graph.activeColor);
 
   if (type === 'pie') packed.t = 'p';
   if (scale !== DEFAULT_GRAPH_SCALE) packed.s = scale;
@@ -2459,7 +3173,7 @@ function packGraphForShare(graph) {
   if (fillPayload) packed.f = fillPayload;
   if (labelPayload) packed.l = labelPayload;
   if (mode !== GRAPH_MODE_CODES.divide) packed.m = mode;
-  if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLORS);
+  if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLOR_SHARE_PALETTE);
 
   return hasObjectKeys(packed) ? packed : null;
 }
@@ -2474,7 +3188,7 @@ function packFillsForShare(fills, dividers) {
   segments.forEach((segment, index) => {
     const color = fills[segment.key];
     if (!color) return;
-    const code = encodeColorForShare(color, GRAPH_COLORS);
+    const code = encodeColorForShare(color, GRAPH_COLOR_SHARE_PALETTE);
     entries.push([index, code]);
     if (typeof code === 'string' && code.length === 1) {
       codes[index] = code;
@@ -2560,7 +3274,7 @@ function unpackGraphForShare(encoded) {
     type: graph.t === 'p' ? 'pie' : 'bar',
     scale,
     mode: GRAPH_MODES_BY_CODE[graph.m] || 'divide',
-    activeColor: decodeColorForShare(graph.a, GRAPH_COLORS, GRAPH_COLORS[0]),
+    activeColor: decodeColorForShare(graph.a, GRAPH_COLOR_SHARE_PALETTE, GRAPH_COLORS[0]),
     dividers,
     fills: decodeFillsForShare(graph.f, dividers),
     labels: decodeLabelsForShare(graph.l)
@@ -2588,7 +3302,7 @@ function decodeFillsForShare(encoded, dividers) {
   if (typeof encoded === 'string') {
     Array.from(encoded).forEach((code, index) => {
       if (!segments[index] || code === '.') return;
-      fills[segments[index].key] = decodeColorForShare(code, GRAPH_COLORS, GRAPH_COLORS[0]);
+      fills[segments[index].key] = decodeColorForShare(code, GRAPH_COLOR_SHARE_PALETTE, GRAPH_COLORS[0]);
     });
     return fills;
   }
@@ -2597,7 +3311,7 @@ function decodeFillsForShare(encoded, dividers) {
     if (!Array.isArray(entry)) return;
     const index = Number(entry[0]);
     if (!segments[index]) return;
-    fills[segments[index].key] = decodeColorForShare(entry[1], GRAPH_COLORS, GRAPH_COLORS[0]);
+    fills[segments[index].key] = decodeColorForShare(entry[1], GRAPH_COLOR_SHARE_PALETTE, GRAPH_COLORS[0]);
   });
   return fills;
 }
@@ -2628,7 +3342,7 @@ function decodeColorForShare(value, palette, fallback) {
   if (typeof value !== 'string' || !value) return fallback;
   const index = Number.parseInt(value, 36);
   if (value.length <= 2 && Number.isFinite(index) && palette[index]) return palette[index];
-  return value;
+  return normalizeGraphColor(value) || fallback;
 }
 
 function quantizePercent(value) {

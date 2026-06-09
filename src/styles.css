@@ -7,7 +7,7 @@
   --soft: #eef4ee;
   --teal: #2bb3a3;
   --teal-dark: #137b72;
-  --coral: #ff6b6b;
+  --coral: #ff9b9b;
   --mustard: #f7b731;
   --blue: #4d96ff;
   --shadow: 0 14px 30px rgba(31, 45, 61, 0.10);
@@ -238,6 +238,7 @@ textarea.text-input:focus {
   justify-content: center;
   padding: 0 14px;
   width: 100%;
+  text-decoration: none;
 }
 
 .icon-text-button svg {
@@ -290,8 +291,17 @@ textarea.text-input:focus {
   height: 26px;
   border: 1px solid #ffffff;
   border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-shadow: 0 0 0 1px var(--line);
+  color: var(--muted);
   cursor: pointer;
+}
+
+.swatch.is-eraser {
+  background: #ffffff;
+  border-color: var(--line);
 }
 
 .swatch.is-active {
@@ -751,6 +761,15 @@ textarea.text-input:focus {
   font-size: 12px;
 }
 
+.manual-table.is-fit-width {
+  table-layout: fixed;
+}
+
+.manual-table.is-fit-width input,
+.manual-table.is-fit-width .manual-table-cell-text {
+  min-width: 0;
+}
+
 .graph-workspace {
   display: grid;
   grid-template-columns: 1fr;
@@ -855,87 +874,24 @@ textarea.text-input:focus {
   min-width: 0;
 }
 
-.graph-manual-panel {
-  margin: 10px 0 10px;
-}
-
-.graph-segment-list {
+.graph-action-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: 28px;
-  grid-gap: 5px;
-  height: 160px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding-right: 2px;
-  scrollbar-width: thin;
+  grid-gap: 8px;
+  margin: 8px 0 10px;
 }
 
-.graph-segment-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 26px;
-  grid-gap: 5px;
+.graph-action-button {
   min-width: 0;
-}
-
-.graph-segment-fill,
-.segment-clear-button {
-  height: 28px;
-  min-height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #ffffff;
-  color: var(--ink);
-  cursor: pointer;
-}
-
-.graph-segment-fill {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  padding: 0 6px;
-  font-size: 12px;
+  min-height: 40px;
+  padding: 0 8px;
+  font-size: 13px;
   font-weight: 800;
 }
 
-.graph-segment-fill span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.segment-color-dot {
-  width: 14px;
-  height: 14px;
-  min-width: 14px;
-  margin-right: 5px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-}
-
-.segment-clear-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-
-.segment-clear-button:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
-
-.graph-segment-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.graph-action-row {
-  display: grid;
-  grid-template-columns: repeat(2, 40px);
-  grid-gap: 8px;
-  justify-content: end;
-  margin: 8px 0 10px;
+.graph-report-button,
+.graph-share-button {
+  margin-top: 8px;
 }
 
 .graph-canvas {
@@ -1230,6 +1186,114 @@ textarea.text-input:focus {
   padding: 16px;
   box-shadow: 0 30px 70px rgba(31, 45, 61, 0.25);
   animation: dialogIn 220ms ease both;
+}
+
+.report-backdrop {
+  align-items: flex-start;
+  overflow: auto;
+}
+
+.report-dialog {
+  width: 100%;
+  max-width: 900px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  padding: 12px;
+  box-shadow: 0 30px 70px rgba(31, 45, 61, 0.25);
+  animation: dialogIn 220ms ease both;
+}
+
+.report-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.report-save-button {
+  width: auto;
+  min-width: 104px;
+  justify-self: start;
+}
+
+.report-page {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: 24px;
+  background: #ffffff;
+  color: #111111;
+}
+
+.report-title {
+  margin-bottom: 14px;
+  color: #111111;
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.report-table-block {
+  margin-bottom: 18px;
+}
+
+.report-page .manual-table-wrap {
+  overflow: visible;
+}
+
+.report-page .manual-table th,
+.report-page .manual-table td {
+  border-color: #000000;
+}
+
+.report-page .manual-table-cell-text {
+  min-height: 34px;
+  padding: 5px 4px;
+  color: #000000;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.report-graph-frame {
+  position: relative;
+  width: 100%;
+  min-height: 430px;
+  overflow: visible;
+  background: #ffffff;
+}
+
+.report-graph-frame.is-bar {
+  min-height: 260px;
+}
+
+.report-graph-frame .bar-svg {
+  width: 96%;
+  max-width: none;
+}
+
+.report-graph-frame .pie-svg {
+  width: 72%;
+  max-width: 460px;
+}
+
+.report-label-frame {
+  pointer-events: none;
+}
+
+.report-floating-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+.report-message {
+  margin-top: 10px;
 }
 
 @keyframes fadeIn {
