@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
+import jsQR from 'jsqr';
 import QRCode from 'qrcode';
 import {
   compressToEncodedURIComponent,
@@ -12,6 +13,7 @@ import {
   ALargeSmall,
   ChevronLeft,
   ChevronRight,
+  Circle,
   Download,
   Eraser,
   FileText,
@@ -35,7 +37,8 @@ import './styles.css';
 const TABS = [
   { id: 'plan', label: '계획', icon: PenLine },
   { id: 'table', label: '표 그리기', icon: Table2 },
-  { id: 'graph', label: '그래프 그리기', icon: PieChart }
+  { id: 'graph', label: '그래프 그리기', icon: PieChart },
+  { id: 'interpret', label: '해석하기', icon: FileText }
 ];
 
 const DEFAULT_PLAN_ITEM_COUNT = 4;
@@ -127,11 +130,14 @@ const TOTAL_COLUMN_LABEL = '합계';
 const DEFAULT_GRAPH_SCALE = 10;
 const MIN_GRAPH_SCALE = 1;
 const MAX_GRAPH_SCALE = 20;
+const DIVIDER_DRAG_BAR_TOLERANCE = 8;
+const DIVIDER_DRAG_PIE_TOLERANCE = 10;
 const SHARE_VERSION = 2;
 const SHARE_DEFAULT_TOKEN = '0';
 const SHARE_CHUNK_PREFIX = 'how-to-graph-share-parts:';
 const SHARE_CHUNK_SIZES = [1500, 1200, 950, 720, 540, 400, 300, 220, 160, 110, 72, 44, 24, 12, 6, 3, 1];
 const BASE32_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const INTERPRETATION_STORAGE_KEY = 'how-to-graph-interpretation';
 const QR_IMAGE_OPTIONS = {
   margin: 1,
   scale: 8,
@@ -187,6 +193,48 @@ function createDefaultState() {
       labels: []
     }
   };
+}
+
+function createDefaultInterpretationAnswers() {
+  return {
+    mostAction: '',
+    mostSubject: '',
+    mostAnswer: '',
+    leastAction: '',
+    leastSubject: '',
+    leastAnswer: '',
+    compareLeftItem: '',
+    compareLeftAction: '',
+    compareRightItem: '',
+    compareRightAction: '',
+    compareRelation: '많습니다',
+    ratioItem: '',
+    ratioAction: '',
+    ratioPercent: ''
+  };
+}
+
+function normalizeInterpretationAnswers(raw) {
+  const defaults = createDefaultInterpretationAnswers();
+  if (!raw || typeof raw !== 'object') return defaults;
+  return Object.keys(defaults).reduce((answers, key) => {
+    if (key === 'compareRelation') {
+      answers[key] = raw[key] === '적습니다' ? '적습니다' : '많습니다';
+      return answers;
+    }
+    answers[key] = typeof raw[key] === 'string' ? raw[key] : defaults[key];
+    return answers;
+  }, { ...defaults });
+}
+
+function getSentenceBlankWidth(value) {
+  const text = typeof value === 'string' ? value : '';
+  if (!text) return 0;
+  const textUnits = Array.from(text).reduce((total, character) => {
+    if (character === ' ') return total + 0.35;
+    return total + (/^[\x00-\x7F]$/.test(character) ? 0.62 : 1);
+  }, 0);
+  return Math.ceil(textUnits * 16 + 18);
 }
 
 function normalizeStoredGraphMode(value) {
@@ -542,6 +590,40 @@ function clampLabelCenterToCanvas(x, y, width, height, canvasRect) {
   };
 }
 
+function useElementSize() {
+  const elementRef = useRef(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element) return undefined;
+
+    function updateSize() {
+      const rect = element.getBoundingClientRect();
+      setSize((currentSize) => {
+        const width = roundLabelMetric(rect.width);
+        const height = roundLabelMetric(rect.height);
+        return currentSize.width === width && currentSize.height === height
+          ? currentSize
+          : { width, height };
+      });
+    }
+
+    updateSize();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateSize);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
+  return [elementRef, size];
+}
+
 function normalizeGraphLabel(label) {
   const text = label && typeof label.text === 'string' ? label.text : '';
   const rawWidth = Number(label && label.width);
@@ -600,6 +682,14 @@ function App() {
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [interpretationAnswers, setInterpretationAnswers] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(INTERPRETATION_STORAGE_KEY);
+      return saved ? normalizeInterpretationAnswers(JSON.parse(saved)) : createDefaultInterpretationAnswers();
+    } catch (error) {
+      return createDefaultInterpretationAnswers();
+    }
+  });
 
   useEffect(() => {
     try {
@@ -609,11 +699,23 @@ function App() {
     }
   }, [state]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(INTERPRETATION_STORAGE_KEY, JSON.stringify(interpretationAnswers));
+    } catch (error) {
+      // 해석 활동 답안은 로컬 보조 상태라 저장 실패가 앱 사용을 막지 않는다.
+    }
+  }, [interpretationAnswers]);
+
   function patchState(section, patch) {
     setState((previous) => ({
       ...previous,
       [section]: typeof patch === 'function' ? patch(previous[section], previous) : { ...previous[section], ...patch }
     }));
+  }
+
+  function patchInterpretationAnswers(patch) {
+    setInterpretationAnswers((previous) => normalizeInterpretationAnswers({ ...previous, ...patch }));
   }
 
   function applyLoadedState(nextState) {
@@ -676,6 +778,13 @@ function App() {
               graph={state.graph}
               onChange={(patch) => patchState('graph', patch)}
               onOpenReport={() => setReportOpen(true)}
+            />
+          )}
+          {activeTab === 'interpret' && (
+            <InterpretationWorkspace
+              graph={state.graph}
+              answers={interpretationAnswers}
+              onAnswerChange={patchInterpretationAnswers}
             />
           )}
         </section>
@@ -1123,7 +1232,7 @@ function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = fal
 
   return (
     <div className="manual-table-wrap">
-      <table className={tableClassName} style={{ minWidth: fitWidth ? '0px' : `${Math.max(360, tableWidth * (compact ? 92 : 104))}px` }}>
+      <table className={tableClassName} style={{ minWidth: fitWidth ? '0px' : `min(100%, ${Math.max(360, tableWidth * (compact ? 92 : 104))}px)` }}>
         <thead>
           <tr>
             {headerRow.map((cell, cellIndex) => (
@@ -1343,11 +1452,12 @@ function FinalReport({ title, headerRow, rows, tableWidth, graph }) {
 }
 
 function ReportGraph({ graph }) {
+  const [frameRef, frameSize] = useElementSize();
   const segments = getSegments(graph.dividers);
   const graphClassName = `report-graph-frame is-${graph.type === 'pie' ? 'pie' : 'bar'}`;
 
   return (
-    <div className={graphClassName} aria-label="보고서 그래프">
+    <div className={graphClassName} ref={frameRef} aria-label="보고서 그래프">
       {graph.type === 'bar' ? (
         <BarGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
       ) : (
@@ -1356,7 +1466,8 @@ function ReportGraph({ graph }) {
       {(Array.isArray(graph.labels) ? graph.labels : []).map((rawLabel) => {
         const label = normalizeGraphLabel(rawLabel);
         if (!label.text.trim()) return null;
-        const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, MAX_LABEL_WIDTH);
+        const maxLabelWidth = getCanvasLabelMaxWidth(frameSize);
+        const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, maxLabelWidth);
         const labelHeight = getLabelBoxHeightForText(label.text, label.fontSize, labelWidth, null);
         return (
           <div
@@ -2139,9 +2250,220 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
   );
 }
 
+function InterpretationWorkspace({ graph, answers, onAnswerChange }) {
+  const currentAnswers = normalizeInterpretationAnswers(answers);
+
+  function setAnswer(key, value) {
+    onAnswerChange({ [key]: value });
+  }
+
+  return (
+    <div className="interpretation-workspace">
+      <div className="interpret-graph-panel">
+        <StaticGraphCanvas graph={graph} />
+      </div>
+
+      <form className="interpret-form" aria-label="그래프 해석 문장 틀" onSubmit={(event) => event.preventDefault()}>
+        <ol className="interpret-sentence-list">
+          <li className="interpret-sentence">
+            <span className="sentence-number">1</span>
+            <span>가장 많은 학생이</span>
+            <SentenceBlank
+              value={currentAnswers.mostAction}
+              onChange={(value) => setAnswer('mostAction', value)}
+              label="1번 행동"
+            />
+            <span>하는</span>
+            <SentenceBlank
+              value={currentAnswers.mostSubject}
+              onChange={(value) => setAnswer('mostSubject', value)}
+              label="1번 대상"
+            />
+            <span>은</span>
+            <SentenceBlank
+              value={currentAnswers.mostAnswer}
+              onChange={(value) => setAnswer('mostAnswer', value)}
+              label="1번 답"
+            />
+            <span>입니다.</span>
+          </li>
+
+          <li className="interpret-sentence">
+            <span className="sentence-number">2</span>
+            <span>가장 적은 학생이</span>
+            <SentenceBlank
+              value={currentAnswers.leastAction}
+              onChange={(value) => setAnswer('leastAction', value)}
+              label="2번 행동"
+            />
+            <span>하는</span>
+            <SentenceBlank
+              value={currentAnswers.leastSubject}
+              onChange={(value) => setAnswer('leastSubject', value)}
+              label="2번 대상"
+            />
+            <span>은</span>
+            <SentenceBlank
+              value={currentAnswers.leastAnswer}
+              onChange={(value) => setAnswer('leastAnswer', value)}
+              label="2번 답"
+            />
+            <span>입니다.</span>
+          </li>
+
+          <li className="interpret-sentence">
+            <span className="sentence-number">3</span>
+            <SentenceBlank
+              value={currentAnswers.compareLeftItem}
+              onChange={(value) => setAnswer('compareLeftItem', value)}
+              label="3번 첫 번째 항목"
+            />
+            <span>을</span>
+            <SentenceBlank
+              value={currentAnswers.compareLeftAction}
+              onChange={(value) => setAnswer('compareLeftAction', value)}
+              label="3번 첫 번째 행동"
+            />
+            <span>하는 학생은</span>
+            <SentenceBlank
+              value={currentAnswers.compareRightItem}
+              onChange={(value) => setAnswer('compareRightItem', value)}
+              label="3번 두 번째 항목"
+            />
+            <span>을</span>
+            <SentenceBlank
+              value={currentAnswers.compareRightAction}
+              onChange={(value) => setAnswer('compareRightAction', value)}
+              label="3번 두 번째 행동"
+            />
+            <span>하는 학생보다</span>
+            <RelationChoice
+              value={currentAnswers.compareRelation}
+              onChange={(value) => setAnswer('compareRelation', value)}
+            />
+            <span>.</span>
+          </li>
+
+          <li className="interpret-sentence">
+            <span className="sentence-number">4</span>
+            <span>전체 학생 중</span>
+            <SentenceBlank
+              value={currentAnswers.ratioItem}
+              onChange={(value) => setAnswer('ratioItem', value)}
+              label="4번 항목"
+            />
+            <span>을</span>
+            <SentenceBlank
+              value={currentAnswers.ratioAction}
+              onChange={(value) => setAnswer('ratioAction', value)}
+              label="4번 행동"
+            />
+            <span>하는 학생은</span>
+            <SentenceBlank
+              value={currentAnswers.ratioPercent}
+              onChange={(value) => setAnswer('ratioPercent', value)}
+              label="4번 비율"
+              short
+              inputMode="decimal"
+            />
+            <span>%입니다.</span>
+          </li>
+        </ol>
+      </form>
+    </div>
+  );
+}
+
+function RelationChoice({ value, onChange }) {
+  const normalizedValue = value === '적습니다' ? '적습니다' : '많습니다';
+  const choices = ['많습니다', '적습니다'];
+  return (
+    <span className="relation-choice" role="group" aria-label="3번 비교 결과">
+      {choices.map((choice) => (
+        <button
+          key={choice}
+          className={`relation-choice-button ${normalizedValue === choice ? 'is-active' : ''}`}
+          type="button"
+          aria-pressed={normalizedValue === choice}
+          onClick={() => onChange(choice)}
+        >
+          {choice}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function SentenceBlank({ value, onChange, label, short = false, inputMode }) {
+  const textValue = typeof value === 'string' ? value : '';
+  return (
+    <span
+      className={`sentence-blank-wrap ${short ? 'is-short' : ''}`}
+      style={{ '--sentence-blank-content-width': `${getSentenceBlankWidth(textValue)}px` }}
+    >
+      <input
+        className="sentence-blank"
+        value={textValue}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label={label}
+        inputMode={inputMode}
+        autoComplete="off"
+      />
+    </span>
+  );
+}
+
+function StaticGraphCanvas({ graph }) {
+  const [frameRef, frameSize] = useElementSize();
+  const segments = getSegments(graph.dividers);
+  const graphClassName = `static-graph-canvas is-${graph.type === 'pie' ? 'pie' : 'bar'}`;
+
+  return (
+    <div className={graphClassName} ref={frameRef} aria-label="해석할 그래프">
+      {graph.type === 'bar' ? (
+        <BarGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
+      ) : (
+        <PieGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
+      )}
+      {(Array.isArray(graph.labels) ? graph.labels : []).map((rawLabel) => {
+        const label = normalizeGraphLabel(rawLabel);
+        if (!label.text.trim()) return null;
+        const maxLabelWidth = getCanvasLabelMaxWidth(frameSize);
+        const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, maxLabelWidth);
+        const labelHeight = getLabelBoxHeightForText(label.text, label.fontSize, labelWidth, null);
+        return (
+          <div
+            key={label.id}
+            className="static-graph-label-frame"
+            style={{
+              left: `clamp(${labelWidth / 2}px, ${label.x}%, calc(100% - ${labelWidth / 2}px))`,
+              top: `clamp(${labelHeight / 2}px, ${label.y}%, calc(100% - ${labelHeight / 2}px))`,
+              width: `${labelWidth}px`,
+              height: `${labelHeight}px`
+            }}
+          >
+            <div
+              className="static-graph-label"
+              style={{
+                color: label.color,
+                fontSize: `${label.fontSize}px`,
+                textShadow: label.color === '#ffffff'
+                  ? '0 1px 3px rgba(0, 0, 0, 0.72)'
+                  : '0 1px 2px rgba(255, 255, 255, 0.38)'
+              }}
+            >
+              {label.text}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onPoint, onLabelChange, onLabelRemove }, ref) {
   const canvasElementRef = useRef(null);
-  const activeDividerPointerId = useRef(null);
+  const activeDividerDragRef = useRef(null);
   const labelActionRef = useRef(null);
   const labelInputRefs = useRef(new Map());
   const onLabelChangeRef = useRef(onLabelChange);
@@ -2149,6 +2471,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   const [hoverPoint, setHoverPoint] = useState(null);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [selectedLabelId, setSelectedLabelId] = useState(null);
+  const [dividerDragInput, setDividerDragInput] = useState(null);
   const previewDivider = hoverPoint && hoverPoint.insideGraph && graph.mode === 'divide'
     ? getSnappedDividerValue(graph, hoverPoint)
     : null;
@@ -2161,7 +2484,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   const readoutStyle = hoverPoint
     ? {
       left: `${clamp(hoverPoint.canvasX, 9, 91)}%`,
-      top: `${clamp(hoverPoint.canvasY - 8, 7, 93)}%`
+      top: `${clamp(hoverPoint.canvasY - (dividerDragInput === 'touch' && graph.mode === 'divide' ? 13 : 8), 7, 93)}%`
     }
     : null;
 
@@ -2271,7 +2594,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     releaseLabelSelection(labelId);
   }
 
-  function pointFromEvent(clientX, clientY, target) {
+  function pointFromEvent(clientX, clientY, target, options = {}) {
     const rect = target.getBoundingClientRect();
     const canvasX = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
     const canvasY = clamp(((clientY - rect.top) / rect.height) * 100, 0, 100);
@@ -2285,14 +2608,37 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     const graphX = clamp(((svgX - BAR_GRAPH_BOX.left) / BAR_GRAPH_BOX.width) * 100, 0, 100);
     const graphY = clamp(((svgY - BAR_GRAPH_BOX.top) / BAR_GRAPH_BOX.height) * 100, 0, 100);
     const pieDistance = Math.hypot(rawSvgX - PIE_GRAPH_CIRCLE.cx, rawSvgY - PIE_GRAPH_CIRCLE.cy);
+    const barTolerance = options.relaxedDivider ? DIVIDER_DRAG_BAR_TOLERANCE : 0;
+    const pieTolerance = options.relaxedDivider ? DIVIDER_DRAG_PIE_TOLERANCE : 0;
     const insideGraph = graph.type === 'bar'
       ? rawSvgX >= BAR_GRAPH_BOX.left
         && rawSvgX <= BAR_GRAPH_BOX.left + BAR_GRAPH_BOX.width
-        && rawSvgY >= BAR_GRAPH_BOX.top
-        && rawSvgY <= BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height
-      : pieDistance <= PIE_GRAPH_CIRCLE.radius;
-    const percentAngle = pointToPiePercent(svgX, svgY);
+        && rawSvgY >= BAR_GRAPH_BOX.top - barTolerance
+        && rawSvgY <= BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + barTolerance
+      : pieDistance <= PIE_GRAPH_CIRCLE.radius + pieTolerance;
+    const percentAngle = pointToPiePercent(rawSvgX, rawSvgY);
     return { canvasX, canvasY, svgX, svgY, graphX, graphY, percentAngle, insideGraph };
+  }
+
+  function releaseDividerPointer(event) {
+    if (event.currentTarget.releasePointerCapture && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may already be gone after cancellation or browser cleanup.
+      }
+    }
+  }
+
+  function updateDividerDragPoint(event, options = {}) {
+    const dragState = activeDividerDragRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return null;
+    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget, { relaxedDivider: true });
+    if (point.insideGraph) {
+      dragState.lastPoint = point;
+      return point;
+    }
+    return options.allowLastPoint ? dragState.lastPoint : null;
   }
 
   function handlePointerDown(event) {
@@ -2310,7 +2656,12 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     if (graph.mode === 'divide') {
       event.preventDefault();
       if (!point.insideGraph) return;
-      activeDividerPointerId.current = event.pointerId;
+      activeDividerDragRef.current = {
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        lastPoint: point
+      };
+      setDividerDragInput(event.pointerType);
       if (event.currentTarget.setPointerCapture) {
         try {
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -2325,29 +2676,33 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   }
 
   function handlePointerMove(event) {
+    if (graph.mode === 'divide' && activeDividerDragRef.current && activeDividerDragRef.current.pointerId === event.pointerId) {
+      event.preventDefault();
+      const point = updateDividerDragPoint(event, { allowLastPoint: true });
+      setHoverPoint(point && point.insideGraph ? point : null);
+      return;
+    }
+
     const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
     setHoverPoint(point.insideGraph ? point : null);
   }
 
   function handlePointerUp(event) {
-    if (graph.mode !== 'divide' || activeDividerPointerId.current !== event.pointerId) return;
+    if (graph.mode !== 'divide' || !activeDividerDragRef.current || activeDividerDragRef.current.pointerId !== event.pointerId) return;
     event.preventDefault();
-    const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
-    activeDividerPointerId.current = null;
-    if (event.currentTarget.releasePointerCapture && event.currentTarget.hasPointerCapture(event.pointerId)) {
-      try {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      } catch {
-        // Pointer capture may already be gone after cancellation or browser cleanup.
-      }
-    }
+    const point = updateDividerDragPoint(event, { allowLastPoint: true });
+    activeDividerDragRef.current = null;
+    setDividerDragInput(null);
+    releaseDividerPointer(event);
     setHoverPoint(null);
-    if (point.insideGraph) onPoint(point);
+    if (point && point.insideGraph) onPoint(point);
   }
 
   function handlePointerCancel(event) {
-    if (activeDividerPointerId.current !== event.pointerId) return;
-    activeDividerPointerId.current = null;
+    if (!activeDividerDragRef.current || activeDividerDragRef.current.pointerId !== event.pointerId) return;
+    activeDividerDragRef.current = null;
+    setDividerDragInput(null);
+    releaseDividerPointer(event);
     setHoverPoint(null);
   }
 
@@ -2453,14 +2808,14 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
 
   return (
     <div
-      className={`graph-canvas mode-${graph.mode}`}
+      className={`graph-canvas mode-${graph.mode}${dividerDragInput === 'touch' ? ' is-divider-touching' : ''}`}
       ref={setGraphCanvasRef}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
       onPointerLeave={() => {
-        if (activeDividerPointerId.current === null) setHoverPoint(null);
+        if (!activeDividerDragRef.current) setHoverPoint(null);
       }}
       role="button"
       aria-label="그래프 그리기 영역"
@@ -2772,6 +3127,17 @@ function ShareDialog({ state, onClose, onImport }) {
     onClose();
   }
 
+  function handleScannedText(text) {
+    setImportText(text);
+    const result = parseImportTextResult(text);
+    if (!result.state) {
+      setMessage(result.message || '읽은 QR을 적용할 수 없습니다.');
+      return;
+    }
+    onImport(result.state);
+    onClose();
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation">
       <div className="share-dialog" role="dialog" aria-modal="true" aria-label="QR 보내기 받기">
@@ -2817,6 +3183,7 @@ function ShareDialog({ state, onClose, onImport }) {
           </div>
 
           <div className="import-card">
+            <CameraQrScanner onScan={handleScannedText} />
             <label className="field-label">
               QR로 연 주소나 코드를 붙여넣기
               <textarea
@@ -2834,6 +3201,131 @@ function ShareDialog({ state, onClose, onImport }) {
         </div>
         {message && <p className="dialog-message">{message}</p>}
       </div>
+    </div>
+  );
+}
+
+function CameraQrScanner({ onScan }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const onScanRef = useRef(onScan);
+  const lastScanRef = useRef({ text: '', time: 0 });
+  const [isScanning, setIsScanning] = useState(false);
+  const [scannerMessage, setScannerMessage] = useState('');
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  useEffect(() => {
+    if (!isScanning) return undefined;
+
+    let stream = null;
+    let frameId = 0;
+    let stopped = false;
+
+    function stopStream() {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+      }
+      if (videoRef.current) videoRef.current.srcObject = null;
+    }
+
+    function scanFrame() {
+      if (stopped) return;
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (video && canvas && video.readyState >= 2 && video.videoWidth && video.videoHeight) {
+        const width = video.videoWidth;
+        const height = video.videoHeight;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (context) {
+          canvas.width = width;
+          canvas.height = height;
+          context.drawImage(video, 0, 0, width, height);
+          const imageData = context.getImageData(0, 0, width, height);
+          const result = jsQR(imageData.data, width, height, { inversionAttempts: 'attemptBoth' });
+          const text = result && typeof result.data === 'string' ? result.data.trim() : '';
+          const now = Date.now();
+          if (text && (text !== lastScanRef.current.text || now - lastScanRef.current.time > 1800)) {
+            lastScanRef.current = { text, time: now };
+            setScannerMessage('QR을 읽었습니다.');
+            onScanRef.current(text);
+          }
+        }
+      }
+      frameId = window.requestAnimationFrame(scanFrame);
+    }
+
+    async function startCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setScannerMessage('이 브라우저는 카메라를 지원하지 않습니다.');
+        setIsScanning(false);
+        return;
+      }
+
+      setScannerMessage('카메라를 여는 중입니다.');
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        if (stopped) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        setScannerMessage('QR 대기 중');
+        frameId = window.requestAnimationFrame(scanFrame);
+      } catch (error) {
+        if (!stopped) {
+          setScannerMessage('카메라를 열 수 없습니다. 권한 또는 HTTPS/localhost를 확인하세요.');
+          setIsScanning(false);
+        }
+      }
+    }
+
+    startCamera();
+
+    return () => {
+      stopped = true;
+      stopStream();
+    };
+  }, [isScanning]);
+
+  function toggleScanner() {
+    if (isScanning) {
+      setScannerMessage('');
+      setIsScanning(false);
+      return;
+    }
+    lastScanRef.current = { text: '', time: 0 };
+    setScannerMessage('');
+    setIsScanning(true);
+  }
+
+  return (
+    <div className={`qr-scanner ${isScanning ? 'is-active' : ''}`}>
+      <button className={`icon-text-button ${isScanning ? 'secondary' : ''}`} type="button" onClick={toggleScanner}>
+        {isScanning ? <X size={18} aria-hidden="true" /> : <QrCode size={18} aria-hidden="true" />}
+        <span>{isScanning ? '카메라 닫기' : '카메라로 받기'}</span>
+      </button>
+      {isScanning && (
+        <div className="qr-scanner-preview">
+          <video ref={videoRef} muted playsInline />
+          <canvas ref={canvasRef} aria-hidden="true" />
+        </div>
+      )}
+      {scannerMessage && <p className="qr-scanner-message" aria-live="polite">{scannerMessage}</p>}
     </div>
   );
 }

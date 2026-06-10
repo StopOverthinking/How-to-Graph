@@ -13,6 +13,7 @@
   "dependencies": {
     "@vitejs/plugin-legacy": "^7.2.1",
     "@vitejs/plugin-react": "^5.1.1",
+    "jsqr": "^1.4.0",
     "lucide-react": "^1.17.0",
     "lz-string": "^1.5.0",
     "qrcode": "^1.5.4",
