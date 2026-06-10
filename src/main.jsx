@@ -119,7 +119,8 @@ const MAX_LABEL_WIDTH = 640;
 const LABEL_AUTO_PADDING = 32;
 const LABEL_FRAME_MARGIN = 12;
 const LABEL_LINE_HEIGHT = 1.18;
-const LABEL_BOX_VERTICAL_PADDING_EM = 0.4;
+const LABEL_BOX_VERTICAL_PADDING_EM = 0.75;
+const LABEL_BOX_VERTICAL_GUARD_PX = 2;
 const LABEL_SELECTION_INSET_EM = 0.3;
 const DEFAULT_LABEL_FONT_SIZE = 20;
 const MIN_LABEL_FONT_SIZE = 12;
@@ -536,8 +537,28 @@ function roundLabelMetric(value) {
   return Math.round(value * 100) / 100;
 }
 
-function getLabelBoxHeight(rowCount, fontSize) {
-  return roundLabelMetric(fontSize * (Math.max(1, rowCount) * LABEL_LINE_HEIGHT + LABEL_BOX_VERTICAL_PADDING_EM));
+function getLabelBoxVerticalChrome(fontSize, inputElement) {
+  if (inputElement && typeof window !== 'undefined') {
+    const style = window.getComputedStyle(inputElement);
+    const chrome = [
+      style.paddingTop,
+      style.paddingBottom,
+      style.borderTopWidth,
+      style.borderBottomWidth
+    ].reduce((total, value) => {
+      const number = Number.parseFloat(value);
+      return total + (Number.isFinite(number) ? number : 0);
+    }, LABEL_BOX_VERTICAL_GUARD_PX);
+    return Math.max(fontSize * LABEL_BOX_VERTICAL_PADDING_EM, chrome);
+  }
+  return fontSize * LABEL_BOX_VERTICAL_PADDING_EM;
+}
+
+function getLabelBoxHeight(rowCount, fontSize, inputElement) {
+  return roundLabelMetric(
+    fontSize * Math.max(1, rowCount) * LABEL_LINE_HEIGHT
+      + getLabelBoxVerticalChrome(fontSize, inputElement)
+  );
 }
 
 function getLabelVisualRowCount(text, fontSize, width, inputElement) {
@@ -550,7 +571,7 @@ function getLabelVisualRowCount(text, fontSize, width, inputElement) {
 }
 
 function getLabelBoxHeightForText(text, fontSize, width, inputElement) {
-  return getLabelBoxHeight(getLabelVisualRowCount(text, fontSize, width, inputElement), fontSize);
+  return getLabelBoxHeight(getLabelVisualRowCount(text, fontSize, width, inputElement), fontSize, inputElement);
 }
 
 function getLabelSelectionInset(fontSize) {
@@ -3080,7 +3101,6 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
 function ShareDialog({ state, onClose, onImport }) {
   const [qrSrc, setQrSrc] = useState('');
   const [activeQrIndex, setActiveQrIndex] = useState(0);
-  const [importText, setImportText] = useState('');
   const [message, setMessage] = useState('');
   const sharePayload = useMemo(() => makeSharePayload(state), [state]);
   const activeQrItem = sharePayload.items[Math.min(activeQrIndex, sharePayload.items.length - 1)] || sharePayload.items[0];
@@ -3103,32 +3123,7 @@ function ShareDialog({ state, onClose, onImport }) {
     };
   }, [activeQrItem.url]);
 
-  function copyPayload() {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(sharePayload.copyText)
-        .then(() => setMessage('복사했습니다.'))
-        .catch(() => {
-          setImportText(sharePayload.copyText);
-          setMessage('아래 주소를 길게 눌러 복사해 주세요.');
-        });
-    } else {
-      setImportText(sharePayload.copyText);
-      setMessage('아래 주소를 길게 눌러 복사해 주세요.');
-    }
-  }
-
-  function applyImport() {
-    const result = parseImportTextResult(importText);
-    if (!result.state) {
-      setMessage(result.message || '가져올 수 없는 QR 내용입니다.');
-      return;
-    }
-    onImport(result.state);
-    onClose();
-  }
-
   function handleScannedText(text) {
-    setImportText(text);
     const result = parseImportTextResult(text);
     if (!result.state) {
       setMessage(result.message || '읽은 QR을 적용할 수 없습니다.');
@@ -3144,7 +3139,7 @@ function ShareDialog({ state, onClose, onImport }) {
         <div className="section-heading with-action">
           <SectionTitle icon={Share2} title="QR 보내기 / 받기" />
           <button className="icon-button" type="button" onClick={onClose} title="닫기">
-            <Trash2 size={18} aria-hidden="true" />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
@@ -3176,27 +3171,10 @@ function ShareDialog({ state, onClose, onImport }) {
                 </button>
               </div>
             )}
-            <button className="icon-text-button" type="button" onClick={copyPayload}>
-              <Share2 size={18} aria-hidden="true" />
-              <span>주소 복사</span>
-            </button>
           </div>
 
           <div className="import-card">
             <CameraQrScanner onScan={handleScannedText} />
-            <label className="field-label">
-              QR로 연 주소나 코드를 붙여넣기
-              <textarea
-                className="text-input import-area"
-                value={importText}
-                onChange={(event) => setImportText(event.target.value)}
-                placeholder="다른 기기에서 받은 QR 주소"
-              />
-            </label>
-            <button className="icon-text-button" type="button" onClick={applyImport}>
-              <Download size={18} aria-hidden="true" />
-              <span>적용</span>
-            </button>
           </div>
         </div>
         {message && <p className="dialog-message">{message}</p>}
