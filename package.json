@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "codex:context": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/codex-context.ps1",
+    "codex:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/codex-verify.ps1"
   },
   "dependencies": {
     "@vitejs/plugin-legacy": "^7.2.1",
