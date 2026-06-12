@@ -11,13 +11,13 @@ import {
 } from 'lz-string';
 import {
   ALargeSmall,
+  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
   Circle,
   Download,
   Eraser,
   FileText,
-  Grid3X3,
   Maximize2,
   Megaphone,
   MousePointer2,
@@ -26,6 +26,7 @@ import {
   PieChart,
   Plus,
   QrCode,
+  RectangleHorizontal,
   Share2,
   Table2,
   Trash2,
@@ -45,7 +46,7 @@ const DEFAULT_PLAN_ITEM_COUNT = 4;
 const MIN_PLAN_ITEM_COUNT = 1;
 const MAX_PLAN_ITEM_COUNT = 8;
 const MIN_PLAN_STEP = 1;
-const MAX_PLAN_STEP = 4;
+const MAX_PLAN_STEP = 3;
 const GRAPH_COLORS = [
   '#8fe6d2',
   '#ffd37a',
@@ -113,6 +114,10 @@ const LABEL_TICK_STEPS_BY_SCALE = {
 };
 const LABEL_COLORS = ['#1f2d3d', '#ffffff'];
 const LABEL_BORDER_MOVE_AREAS = ['top', 'right', 'bottom', 'left'];
+const GRAPH_LINE_COLOR = '#1f2d3d';
+const GRAPH_ARROW_OUTLINE_COLOR = '#ffffff';
+const MIN_GRAPH_ARROW_LENGTH = 2.5;
+const MAX_GRAPH_ARROWS = 80;
 const DEFAULT_LABEL_WIDTH = 88;
 const MIN_LABEL_WIDTH = 40;
 const MAX_LABEL_WIDTH = 640;
@@ -133,7 +138,8 @@ const MIN_GRAPH_SCALE = 1;
 const MAX_GRAPH_SCALE = 20;
 const DIVIDER_DRAG_BAR_TOLERANCE = 8;
 const DIVIDER_DRAG_PIE_TOLERANCE = 10;
-const SHARE_VERSION = 2;
+const SHARE_VERSION = 3;
+const LEGACY_SHARE_VERSION = 2;
 const SHARE_DEFAULT_TOKEN = '0';
 const SHARE_CHUNK_PREFIX = 'how-to-graph-share-parts:';
 const SHARE_CHUNK_SIZES = [1500, 1200, 950, 720, 540, 400, 300, 220, 160, 110, 72, 44, 24, 12, 6, 3, 1];
@@ -148,9 +154,20 @@ const QR_IMAGE_OPTIONS = {
     light: '#ffffff'
   }
 };
-const GRAPH_MODE_CODES = { divide: 'd', paint: 'p', text: 't' };
-const GRAPH_MODES_BY_CODE = { d: 'divide', p: 'paint', t: 'text' };
+const GRAPH_MODE_CODES = { divide: 'd', paint: 'p', text: 't', arrow: 'a' };
+const GRAPH_MODES_BY_CODE = { d: 'divide', p: 'paint', t: 'text', a: 'arrow' };
 const GRAPH_HISTORY_LIMIT = 80;
+const SHARE_SCOPE_CODES = { plan: 'p', table: 't', graph: 'g', interpret: 'i', full: 'a' };
+const SHARE_SCOPES_BY_CODE = { p: 'plan', t: 'table', g: 'graph', i: 'interpret', a: 'full' };
+const SHARE_SCOPE_LABELS = {
+  plan: '계획하기',
+  table: '표 그리기',
+  graph: '그래프 그리기',
+  interpret: '해석하기',
+  full: '전체'
+};
+const SHARE_GRAPH_TYPE_CODES = { bar: 'b', pie: 'p' };
+const SHARE_GRAPH_TYPES_BY_CODE = { b: 'bar', p: 'pie' };
 const BAR_GRAPH_VIEWBOX = { width: 100, height: 36 };
 const BAR_GRAPH_BOX = { left: 8, top: 10, width: 84, height: 14 };
 const PIE_GRAPH_CIRCLE = { cx: 50, cy: 50, radius: 38 };
@@ -159,17 +176,51 @@ const PIE_MINOR_TICK_OUTER_RADIUS = PIE_GRAPH_CIRCLE.radius + 4;
 const PIE_MAJOR_TICK_INNER_RADIUS = PIE_GRAPH_CIRCLE.radius + 0.9;
 const PIE_MAJOR_TICK_OUTER_RADIUS = PIE_GRAPH_CIRCLE.radius + 2.8;
 const PIE_TICK_LABEL_RADIUS = PIE_GRAPH_CIRCLE.radius + 7.5;
+const GRAPH_DISPLAY_TYPES = ['bar', 'pie'];
+const GRAPH_DISPLAY_ASPECT_RATIO = 48 / 25;
+const BAR_GRAPH_DISPLAY_WIDTH_RATIO = 0.99;
+const PIE_GRAPH_DISPLAY_WIDTH_RATIO = 0.9;
+const EDIT_GRAPH_DISPLAY_WIDTH_RATIOS = { bar: 0.88, pie: 0.74 };
+const REPORT_GRAPH_DISPLAY_WIDTH_RATIOS = { bar: BAR_GRAPH_DISPLAY_WIDTH_RATIO, pie: PIE_GRAPH_DISPLAY_WIDTH_RATIO };
+const GRAPH_DISPLAY_MAX_HEIGHT_INSET = 12;
 const REPORT_IMAGE_WIDTH = 1600;
 const REPORT_IMAGE_HEIGHT = 1200;
 const REPORT_IMAGE_MARGIN = 72;
+const REPORT_IMAGE_GRAPH_OVERLAP = 38;
 const REPORT_IMAGE_LOGICAL_WIDTH = 760;
+const DISPLAY_GRAPH_MIN_VISUAL_SCALE = 0.34;
+const DISPLAY_GRAPH_MAX_VISUAL_SCALE = 1;
 const REPORT_IMAGE_FONT_FAMILY = 'Inter, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif';
+const REPORT_IMAGE_TITLE_FONT_FAMILY = '"Jua", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif';
+const REPORT_IMAGE_TITLE_FONT_LOAD = '400 72px "Jua"';
 const chunkMemory = new Map();
 
 let idSeed = 1;
 function makeId(prefix) {
   idSeed += 1;
   return `${prefix}-${Date.now()}-${idSeed}`;
+}
+
+function createDefaultGraphDrawing(type) {
+  return {
+    type,
+    dividers: [],
+    fills: {},
+    undoStack: [],
+    labels: [],
+    arrows: []
+  };
+}
+
+function createDefaultGraphState() {
+  return {
+    scale: DEFAULT_GRAPH_SCALE,
+    mode: 'divide',
+    activeColor: GRAPH_COLORS[0],
+    activeType: 'bar',
+    bar: createDefaultGraphDrawing('bar'),
+    pie: createDefaultGraphDrawing('pie')
+  };
 }
 
 function createDefaultState() {
@@ -183,16 +234,7 @@ function createDefaultState() {
       rows: fitRows([], getTableWidthForItemCount(DEFAULT_PLAN_ITEM_COUNT)),
       tableDefaultsCleared: true
     },
-    graph: {
-      type: 'bar',
-      scale: DEFAULT_GRAPH_SCALE,
-      mode: 'divide',
-      activeColor: GRAPH_COLORS[0],
-      dividers: [],
-      fills: {},
-      undoStack: [],
-      labels: []
-    }
+    graph: createDefaultGraphState()
   };
 }
 
@@ -204,28 +246,39 @@ function createDefaultInterpretationAnswers() {
     leastAction: '',
     leastSubject: '',
     leastAnswer: '',
-    compareLeftItem: '',
-    compareLeftAction: '',
-    compareRightItem: '',
-    compareRightAction: '',
-    compareRelation: '많습니다',
-    ratioItem: '',
-    ratioAction: '',
-    ratioPercent: ''
+    compareMoreLeftItem: '',
+    compareMoreLeftAction: '',
+    compareMoreRightItem: '',
+    compareMoreRightAction: '',
+    compareLessLeftItem: '',
+    compareLessLeftAction: '',
+    compareLessRightItem: '',
+    compareLessRightAction: ''
   };
 }
 
 function normalizeInterpretationAnswers(raw) {
   const defaults = createDefaultInterpretationAnswers();
   if (!raw || typeof raw !== 'object') return defaults;
-  return Object.keys(defaults).reduce((answers, key) => {
-    if (key === 'compareRelation') {
-      answers[key] = raw[key] === '적습니다' ? '적습니다' : '많습니다';
-      return answers;
-    }
-    answers[key] = typeof raw[key] === 'string' ? raw[key] : defaults[key];
-    return answers;
+  const answers = Object.keys(defaults).reduce((normalizedAnswers, key) => {
+    normalizedAnswers[key] = typeof raw[key] === 'string' ? raw[key] : defaults[key];
+    return normalizedAnswers;
   }, { ...defaults });
+  const legacyCompareKeys = ['compareLeftItem', 'compareLeftAction', 'compareRightItem', 'compareRightAction'];
+  const hasLegacyCompare = legacyCompareKeys.some((key) => typeof raw[key] === 'string' && raw[key]);
+  if (hasLegacyCompare) {
+    const prefix = raw.compareRelation === '적습니다' ? 'compareLess' : 'compareMore';
+    const legacyMap = {
+      [`${prefix}LeftItem`]: raw.compareLeftItem,
+      [`${prefix}LeftAction`]: raw.compareLeftAction,
+      [`${prefix}RightItem`]: raw.compareRightItem,
+      [`${prefix}RightAction`]: raw.compareRightAction
+    };
+    Object.entries(legacyMap).forEach(([key, value]) => {
+      if (!answers[key] && typeof value === 'string') answers[key] = value;
+    });
+  }
+  return answers;
 }
 
 function getSentenceBlankWidth(value) {
@@ -239,7 +292,81 @@ function getSentenceBlankWidth(value) {
 }
 
 function normalizeStoredGraphMode(value) {
-  return value === 'text' ? 'text' : 'divide';
+  return ['paint', 'text', 'arrow'].includes(value) ? value : 'divide';
+}
+
+function normalizeGraphType(value, fallback = 'bar') {
+  return value === 'pie' ? 'pie' : fallback;
+}
+
+function normalizeOptionalGraphType(value) {
+  return value === 'bar' || value === 'pie' ? value : null;
+}
+
+function decodeGraphTypeForShare(value) {
+  return SHARE_GRAPH_TYPES_BY_CODE[value] || normalizeOptionalGraphType(value);
+}
+
+function normalizeGraphDrawing(raw, type) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return {
+    type,
+    dividers: Array.isArray(source.dividers) ? sanitizeDividers(source.dividers) : [],
+    fills: source.fills ? cloneGraphFills(source.fills) : {},
+    undoStack: sanitizeGraphUndoStack(source.undoStack),
+    labels: sanitizeLabels(source.labels),
+    arrows: sanitizeGraphArrows(source.arrows)
+  };
+}
+
+function normalizeGraphState(raw) {
+  const fallback = createDefaultGraphState();
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const hasSplitGraph = source.bar || source.pie;
+  const legacyType = normalizeGraphType(source.type, 'bar');
+  const legacyDrawing = normalizeGraphDrawing(source, legacyType);
+
+  return {
+    scale: normalizeGraphScale(source.scale),
+    mode: normalizeStoredGraphMode(source.mode),
+    activeColor: normalizeGraphActiveColor(source.activeColor, fallback.activeColor),
+    activeType: normalizeGraphType(source.activeType, 'bar'),
+    bar: normalizeGraphDrawing(hasSplitGraph ? source.bar : (legacyType === 'bar' ? legacyDrawing : null), 'bar'),
+    pie: normalizeGraphDrawing(hasSplitGraph ? source.pie : (legacyType === 'pie' ? legacyDrawing : null), 'pie')
+  };
+}
+
+function getGraphDrawing(graph, type) {
+  const graphState = normalizeGraphState(graph);
+  return type === 'pie' ? graphState.pie : graphState.bar;
+}
+
+function getRenderableGraph(graph, type) {
+  const graphState = normalizeGraphState(graph);
+  const drawing = type === 'pie' ? graphState.pie : graphState.bar;
+  return {
+    ...drawing,
+    type,
+    scale: graphState.scale,
+    mode: graphState.mode,
+    activeColor: graphState.activeColor
+  };
+}
+
+function getActiveGraphType(graph) {
+  return normalizeGraphType(normalizeGraphState(graph).activeType, 'bar');
+}
+
+function getGraphTypeLabel(type) {
+  return type === 'pie' ? '원그래프' : '띠그래프';
+}
+
+function getSharePayloadLabel(payload) {
+  if (payload && payload.scope === 'graph') {
+    const graphType = normalizeOptionalGraphType(payload.graphType);
+    if (graphType) return getGraphTypeLabel(graphType);
+  }
+  return SHARE_SCOPE_LABELS[payload && payload.scope] || 'QR';
 }
 
 function normalizeLoadedState(raw) {
@@ -265,16 +392,7 @@ function normalizeLoadedState(raw) {
       items
     },
     table: { headerRow: syncedHeaderRow, rows, tableDefaultsCleared: true },
-    graph: {
-      type: raw.graph && raw.graph.type === 'pie' ? 'pie' : 'bar',
-      scale: normalizeGraphScale(raw.graph && raw.graph.scale),
-      mode: normalizeStoredGraphMode(raw.graph && raw.graph.mode),
-      activeColor: normalizeGraphActiveColor(raw.graph && raw.graph.activeColor, fallback.graph.activeColor),
-      dividers: raw.graph && Array.isArray(raw.graph.dividers) ? sanitizeDividers(raw.graph.dividers) : [],
-      fills: raw.graph && raw.graph.fills ? cloneGraphFills(raw.graph.fills) : {},
-      undoStack: sanitizeGraphUndoStack(raw.graph && raw.graph.undoStack),
-      labels: sanitizeLabels(raw.graph && raw.graph.labels)
-    }
+    graph: normalizeGraphState(raw.graph)
   };
 }
 
@@ -295,14 +413,14 @@ function normalizePlanStep(value, fallback = MIN_PLAN_STEP) {
 }
 
 function getPlanProgressStep(titleComplete, itemsComplete) {
-  if (!titleComplete) return 1;
-  if (!itemsComplete) return 2;
+  if (!itemsComplete) return 1;
+  if (!titleComplete) return 2;
   return 3;
 }
 
 function getPlanMaxStep(titleComplete, itemsComplete) {
-  if (!titleComplete) return 1;
-  if (!itemsComplete) return 2;
+  if (!itemsComplete) return 1;
+  if (!titleComplete) return 2;
   return MAX_PLAN_STEP;
 }
 
@@ -429,7 +547,8 @@ function normalizeGraphActiveColor(color, fallback = GRAPH_COLORS[0]) {
 function makeGraphUndoSnapshot(graph) {
   return {
     dividers: sanitizeDividers(Array.isArray(graph && graph.dividers) ? graph.dividers : []),
-    fills: cloneGraphFills(graph && graph.fills)
+    fills: cloneGraphFills(graph && graph.fills),
+    arrows: sanitizeGraphArrows(graph && graph.arrows)
   };
 }
 
@@ -443,7 +562,8 @@ function areGraphFillsEqual(left, right) {
 function areGraphUndoSnapshotsEqual(left, right) {
   if (!left || !right) return false;
   if (!areRowsEqual(left.dividers, right.dividers)) return false;
-  return areGraphFillsEqual(left.fills, right.fills);
+  if (!areGraphFillsEqual(left.fills, right.fills)) return false;
+  return areGraphArrowsEqual(left.arrows, right.arrows);
 }
 
 function sanitizeGraphUndoStack(stack) {
@@ -599,6 +719,150 @@ function getCanvasLabelMaxWidth(canvasSize) {
   return Math.max(DEFAULT_LABEL_WIDTH, Math.min(MAX_LABEL_WIDTH, canvasSize.width - LABEL_FRAME_MARGIN * 2));
 }
 
+function getDisplayGraphVisualScale(frameSize) {
+  const width = frameSize && Number(frameSize.width);
+  if (!Number.isFinite(width) || width <= 0) return DISPLAY_GRAPH_MAX_VISUAL_SCALE;
+  return roundLabelMetric(clamp(
+    width / REPORT_IMAGE_LOGICAL_WIDTH,
+    DISPLAY_GRAPH_MIN_VISUAL_SCALE,
+    DISPLAY_GRAPH_MAX_VISUAL_SCALE
+  ));
+}
+
+function getGraphViewBoxSize(type) {
+  return type === 'pie'
+    ? { width: 100, height: 100 }
+    : BAR_GRAPH_VIEWBOX;
+}
+
+function getGraphSvgRectInFrame(type, frameSize, widthRatio, options = {}) {
+  const frameWidth = Number(frameSize && frameSize.width);
+  const frameHeight = Number(frameSize && frameSize.height);
+  if (!Number.isFinite(frameWidth) || !Number.isFinite(frameHeight) || frameWidth <= 0 || frameHeight <= 0) {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+
+  const viewBox = getGraphViewBoxSize(type);
+  const safeRatio = Number.isFinite(Number(widthRatio)) && Number(widthRatio) > 0 ? Number(widthRatio) : 1;
+  let width = frameWidth * safeRatio;
+  let height = width * (viewBox.height / viewBox.width);
+  const maxHeight = Number.isFinite(Number(options.maxHeightRatio))
+    ? frameHeight * Number(options.maxHeightRatio)
+    : frameHeight - (Number.isFinite(Number(options.maxHeightInset)) ? Number(options.maxHeightInset) : 0);
+
+  if (Number.isFinite(maxHeight) && maxHeight > 0 && height > maxHeight) {
+    height = maxHeight;
+    width = height * (viewBox.width / viewBox.height);
+  }
+
+  return {
+    x: (frameWidth - width) / 2,
+    y: (frameHeight - height) / 2,
+    width,
+    height
+  };
+}
+
+function getCanonicalGraphEditFrame() {
+  return {
+    width: REPORT_IMAGE_LOGICAL_WIDTH,
+    height: REPORT_IMAGE_LOGICAL_WIDTH / GRAPH_DISPLAY_ASPECT_RATIO
+  };
+}
+
+function getSourceGraphSvgRect(type) {
+  return getGraphSvgRectInFrame(type, getCanonicalGraphEditFrame(), EDIT_GRAPH_DISPLAY_WIDTH_RATIOS[type], {
+    maxHeightInset: GRAPH_DISPLAY_MAX_HEIGHT_INSET
+  });
+}
+
+function getReportPreviewGraphSvgRect(type, frameSize) {
+  return getGraphSvgRectInFrame(type, frameSize, REPORT_GRAPH_DISPLAY_WIDTH_RATIOS[type], {
+    maxHeightInset: GRAPH_DISPLAY_MAX_HEIGHT_INSET
+  });
+}
+
+function getReportImageGraphSvgRect(type, frameSize) {
+  return getGraphSvgRectInFrame(type, frameSize, REPORT_GRAPH_DISPLAY_WIDTH_RATIOS[type], {
+    maxHeightRatio: type === 'pie' ? 0.92 : 0.78
+  });
+}
+
+function projectGraphCanvasPoint(type, xPercent, yPercent, targetFrameSize, targetSvgRect) {
+  const sourceFrame = getCanonicalGraphEditFrame();
+  const sourceSvgRect = getSourceGraphSvgRect(type);
+  const targetWidth = Number(targetFrameSize && targetFrameSize.width);
+  const targetHeight = Number(targetFrameSize && targetFrameSize.height);
+  if (
+    !sourceSvgRect.width
+    || !sourceSvgRect.height
+    || !targetSvgRect
+    || !targetSvgRect.width
+    || !targetSvgRect.height
+    || !Number.isFinite(targetWidth)
+    || !Number.isFinite(targetHeight)
+    || targetWidth <= 0
+    || targetHeight <= 0
+  ) {
+    return {
+      x: targetWidth * (normalizeCanvasPercent(xPercent) / 100),
+      y: targetHeight * (normalizeCanvasPercent(yPercent) / 100)
+    };
+  }
+
+  const sourceX = sourceFrame.width * (normalizeCanvasPercent(xPercent) / 100);
+  const sourceY = sourceFrame.height * (normalizeCanvasPercent(yPercent) / 100);
+  const relativeX = (sourceX - sourceSvgRect.x) / sourceSvgRect.width;
+  const relativeY = (sourceY - sourceSvgRect.y) / sourceSvgRect.height;
+  return {
+    x: targetSvgRect.x + relativeX * targetSvgRect.width,
+    y: targetSvgRect.y + relativeY * targetSvgRect.height
+  };
+}
+
+function projectGraphCanvasPointPercent(type, xPercent, yPercent, targetFrameSize, targetSvgRect) {
+  const targetWidth = Number(targetFrameSize && targetFrameSize.width);
+  const targetHeight = Number(targetFrameSize && targetFrameSize.height);
+  const projected = projectGraphCanvasPoint(type, xPercent, yPercent, targetFrameSize, targetSvgRect);
+  return {
+    x: targetWidth > 0 ? (projected.x / targetWidth) * 100 : normalizeCanvasPercent(xPercent),
+    y: targetHeight > 0 ? (projected.y / targetHeight) * 100 : normalizeCanvasPercent(yPercent)
+  };
+}
+
+function getReportGraphObjectScale(type, targetFrameSize, targetSvgRect) {
+  const sourceSvgRect = getSourceGraphSvgRect(type);
+  if (!sourceSvgRect.width || !targetSvgRect || !targetSvgRect.width) {
+    return getDisplayGraphVisualScale(targetFrameSize);
+  }
+  return roundLabelMetric(clamp(
+    targetSvgRect.width / sourceSvgRect.width,
+    DISPLAY_GRAPH_MIN_VISUAL_SCALE,
+    DISPLAY_GRAPH_MAX_VISUAL_SCALE * 1.6
+  ));
+}
+
+function getDisplayLabelMetrics(rawLabel, frameSize, options = {}) {
+  const label = normalizeGraphLabel(rawLabel);
+  const overrideScale = Number(options.visualScale);
+  const visualScale = Number.isFinite(overrideScale) && overrideScale > 0
+    ? overrideScale
+    : getDisplayGraphVisualScale(frameSize);
+  const logicalCanvasSize = options.sourceFrameSize || (frameSize && visualScale > 0
+    ? { width: frameSize.width / visualScale, height: frameSize.height / visualScale }
+    : frameSize);
+  const sourceMaxLabelWidth = getCanvasLabelMaxWidth(logicalCanvasSize);
+  const sourceLabelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, sourceMaxLabelWidth);
+  const sourceLabelHeight = getLabelBoxHeightForText(label.text, label.fontSize, sourceLabelWidth, null);
+  return {
+    label,
+    visualScale,
+    labelWidth: roundLabelMetric(sourceLabelWidth * visualScale),
+    labelHeight: roundLabelMetric(sourceLabelHeight * visualScale),
+    fontSize: roundLabelMetric(label.fontSize * visualScale)
+  };
+}
+
 function clampLabelCenterToCanvas(x, y, width, height, canvasRect) {
   if (!canvasRect || !canvasRect.width || !canvasRect.height) {
     return { x: clamp(x, 3, 97), y: clamp(y, 3, 97) };
@@ -673,6 +937,53 @@ function sanitizeLabels(labels) {
   return labels.map((label) => normalizeGraphLabel(label));
 }
 
+function normalizeCanvasPercent(value, fallback = 50) {
+  const number = Number(value);
+  return clamp(Number.isFinite(number) ? number : fallback, 0, 100);
+}
+
+function getGraphArrowLength(arrow) {
+  if (!arrow) return 0;
+  return Math.hypot(Number(arrow.x2) - Number(arrow.x1), Number(arrow.y2) - Number(arrow.y1));
+}
+
+function normalizeGraphArrow(arrow) {
+  const source = arrow && typeof arrow === 'object' ? arrow : {};
+  const x1 = normalizeCanvasPercent(source.x1, 50);
+  const y1 = normalizeCanvasPercent(source.y1, 50);
+  const defaultX2 = x1 > 90 ? x1 - 10 : x1 + 10;
+  const x2 = normalizeCanvasPercent(source.x2, defaultX2);
+  const y2 = normalizeCanvasPercent(source.y2, y1);
+  return {
+    id: source.id || makeId('arrow'),
+    x1,
+    y1,
+    x2,
+    y2
+  };
+}
+
+function sanitizeGraphArrows(arrows) {
+  if (!Array.isArray(arrows)) return [];
+  return arrows
+    .map((arrow) => normalizeGraphArrow(arrow))
+    .filter((arrow) => getGraphArrowLength(arrow) >= MIN_GRAPH_ARROW_LENGTH)
+    .slice(-MAX_GRAPH_ARROWS);
+}
+
+function areGraphArrowsEqual(left, right) {
+  const leftArrows = sanitizeGraphArrows(left);
+  const rightArrows = sanitizeGraphArrows(right);
+  if (leftArrows.length !== rightArrows.length) return false;
+  return leftArrows.every((arrow, index) => {
+    const other = rightArrows[index];
+    return arrow.x1 === other.x1
+      && arrow.y1 === other.y1
+      && arrow.x2 === other.x2
+      && arrow.y2 === other.y2;
+  });
+}
+
 function getSegments(dividers) {
   const points = [0].concat(sanitizeDividers(dividers), [100]);
   const segments = [];
@@ -684,6 +995,52 @@ function getSegments(dividers) {
     });
   }
   return segments;
+}
+
+function applyScopedStateImport(currentState, payload, options = {}) {
+  if (!payload || typeof payload !== 'object') return normalizeLoadedState(currentState);
+  if (payload.scope === 'full') return normalizeLoadedState(payload.state);
+  if (payload.scope === 'plan') {
+    return normalizeLoadedState({
+      ...currentState,
+      plan: payload.plan || {}
+    });
+  }
+  if (payload.scope === 'table') {
+    return normalizeLoadedState({
+      ...currentState,
+      table: {
+        ...(payload.table || {}),
+        tableDefaultsCleared: true
+      }
+    });
+  }
+  if (payload.scope === 'graph') {
+    const graphType = normalizeOptionalGraphType(payload.graphType);
+    if (graphType) {
+      const currentGraph = normalizeGraphState(currentState && currentState.graph);
+      const incomingGraph = normalizeGraphState(payload.graph);
+      const nextGraph = {
+        ...currentGraph,
+        activeType: graphType,
+        [graphType]: getGraphDrawing(incomingGraph, graphType)
+      };
+      if (!options.preserveGraphSettings) {
+        nextGraph.scale = incomingGraph.scale;
+        nextGraph.mode = incomingGraph.mode;
+        nextGraph.activeColor = incomingGraph.activeColor;
+      }
+      return normalizeLoadedState({
+        ...(currentState || {}),
+        graph: nextGraph
+      });
+    }
+    return normalizeLoadedState({
+      ...currentState,
+      graph: payload.graph || createDefaultGraphState()
+    });
+  }
+  return normalizeLoadedState(currentState);
 }
 
 function App() {
@@ -705,6 +1062,8 @@ function App() {
   const [reportOpen, setReportOpen] = useState(false);
   const [interpretationAnswers, setInterpretationAnswers] = useState(() => {
     try {
+      const hashAnswers = readInterpretationFromHash();
+      if (hashAnswers) return hashAnswers;
       const saved = window.localStorage.getItem(INTERPRETATION_STORAGE_KEY);
       return saved ? normalizeInterpretationAnswers(JSON.parse(saved)) : createDefaultInterpretationAnswers();
     } catch (error) {
@@ -739,9 +1098,18 @@ function App() {
     setInterpretationAnswers((previous) => normalizeInterpretationAnswers({ ...previous, ...patch }));
   }
 
-  function applyLoadedState(nextState) {
-    setState(normalizeLoadedState(nextState));
-    setToast('QR 자료를 적용했습니다.');
+  function applyImportedPayload(payload) {
+    if (payload.scope === 'interpret') {
+      setInterpretationAnswers(normalizeInterpretationAnswers(payload.interpretation));
+    } else {
+      setState((previous) => applyScopedStateImport(previous, payload, {
+        preserveGraphSettings: payload.scope === 'graph' && !!payload.graphType
+      }));
+      if (payload.scope === 'full' && payload.interpretation) {
+        setInterpretationAnswers(normalizeInterpretationAnswers(payload.interpretation));
+      }
+    }
+    setToast(`${getSharePayloadLabel(payload)} 자료를 적용했습니다.`);
     window.setTimeout(() => setToast(''), 2200);
   }
 
@@ -775,12 +1143,10 @@ function App() {
             <PlanWorkspace
               plan={state.plan}
               table={state.table}
-              graph={state.graph}
               initialStep={lastPlanStep}
               presentationVisible={presentationVisible}
               onChange={(patch) => patchState('plan', patch)}
               onTableChange={(patch) => patchState('table', patch)}
-              onGraphChange={(patch) => patchState('graph', patch)}
               onStepChange={setLastPlanStep}
               onShowPresentation={() => setPresentationVisible(true)}
             />
@@ -814,8 +1180,10 @@ function App() {
       {shareOpen && (
         <ShareDialog
           state={state}
+          activeTab={activeTab}
+          interpretationAnswers={interpretationAnswers}
           onClose={() => setShareOpen(false)}
-          onImport={applyLoadedState}
+          onImport={applyImportedPayload}
         />
       )}
 
@@ -836,18 +1204,15 @@ function App() {
 function PlanWorkspace({
   plan,
   table,
-  graph,
   initialStep,
   presentationVisible,
   onChange,
   onTableChange,
-  onGraphChange,
   onStepChange,
   onShowPresentation
 }) {
-  const titleRef = useRef(null);
   const itemsRef = useRef(null);
-  const graphRef = useRef(null);
+  const titleRef = useRef(null);
   const planSheetRef = useRef(null);
   const pendingScrollRef = useRef(null);
   const itemCount = getPlanItemCount(plan.items, table.headerRow);
@@ -862,9 +1227,7 @@ function PlanWorkspace({
 
   const titleComplete = title.trim().length > 0;
   const itemsComplete = items.every((item) => item.trim().length > 0);
-  const graphTypeLabel = graph.type === 'pie' ? '원그래프' : '띠그래프';
-  const graphSpeechLabel = graph.type === 'pie' ? '원' : '띠';
-  const presentationSentence = `저희 모둠의 그래프 제목은 ${summaryText(title, '제목')}입니다. 자료를 ${items.length}개의 항목으로 나누어 표로 정리하고 백분율을 구한 뒤 ${graphSpeechLabel}그래프로 나타내려 합니다.`;
+  const presentationSentence = `저희 모둠의 표 이름은 ${summaryText(title, '표 이름')}입니다. 자료를 ${items.length}개의 항목으로 나누어 표로 정리하고 백분율을 구한 뒤 띠그래프와 원그래프로 함께 나타내려 합니다.`;
   const [visibleStep, setVisibleStep] = useState(() => {
     const activeInitialStep = getAllowedPlanStep(initialStep, titleComplete, itemsComplete);
     return Math.max(getPlanProgressStep(titleComplete, itemsComplete), activeInitialStep);
@@ -962,11 +1325,6 @@ function PlanWorkspace({
     syncItems(items.filter((_, itemIndex) => itemIndex !== index), index);
   }
 
-  function chooseGraphType(type) {
-    if (graph.type === type) return;
-    onGraphChange({ type, dividers: [], fills: {}, undoStack: [] });
-  }
-
   function summaryText(value, fallback) {
     return value && value.trim() ? value.trim() : fallback;
   }
@@ -975,101 +1333,9 @@ function PlanWorkspace({
     <div className="plan-screen">
       <div className="plan-flow">
         {activeStep === 1 ? (
-          <section className="panel-block plan-step is-active" ref={titleRef}>
-            <div className="plan-step-head">
-              <span className="plan-step-index">1</span>
-              <PenLine size={18} aria-hidden="true" />
-              <span>제목 정하기</span>
-            </div>
-            <div className="plan-title-row">
-              <input
-                className="text-input plan-title-input"
-                value={title}
-                onChange={(event) => updateTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && titleComplete) goToStep(2, itemsRef);
-                }}
-                placeholder="제목"
-                aria-label="제목"
-              />
-              <button
-                className="plan-next-button"
-                type="button"
-                onClick={() => goToStep(2, itemsRef)}
-                onPointerDown={(event) => {
-                  if (!titleComplete) return;
-                  event.preventDefault();
-                  goToStep(2, itemsRef);
-                }}
-                onKeyDown={(event) => handleAdvanceKey(event, 2, itemsRef)}
-                disabled={!titleComplete}
-                title="다음"
-                aria-label="다음: 항목"
-              >
-                <span>다음</span>
-                <ChevronRight size={18} aria-hidden="true" />
-              </button>
-            </div>
-          </section>
-        ) : activeStep < 4 ? (
-          <div className="plan-summary-row" ref={titleRef}>
-            <PenLine size={18} aria-hidden="true" />
-            <span>{summaryText(title, '제목')}</span>
-          </div>
-        ) : null}
-
-        {activeStep === 4 && visibleStep >= 4 && (
-          <section className="panel-block plan-sheet-screen" ref={planSheetRef}>
-            <h2 className="plan-sheet-title">&lt;자료 정리 계획서&gt;</h2>
-            <div className="plan-sheet-list">
-              <div className="plan-sheet-row">
-                <PenLine size={18} aria-hidden="true" />
-                <span>제목</span>
-                <strong>{summaryText(title, '제목')}</strong>
-              </div>
-              <div className="plan-sheet-row">
-                <Table2 size={18} aria-hidden="true" />
-                <span>항목</span>
-                <strong>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</strong>
-              </div>
-              <div className="plan-sheet-row">
-                <PieChart size={18} aria-hidden="true" />
-                <span>그래프</span>
-                <strong>{graphTypeLabel}</strong>
-              </div>
-            </div>
-            {presentationVisible && (
-              <p className="presentation-script" aria-live="polite">{presentationSentence}</p>
-            )}
-            <div className="plan-step-actions">
-              <button
-                className="plan-previous-button"
-                type="button"
-                onClick={() => goToStep(3, graphRef)}
-                title="이전"
-                aria-label="이전: 그래프"
-              >
-                <ChevronLeft size={18} aria-hidden="true" />
-                <span>이전</span>
-              </button>
-              <button
-                className="plan-present-button"
-                type="button"
-                onClick={onShowPresentation}
-                title="발표"
-                aria-label="발표 문장 채우기"
-              >
-                <Megaphone size={18} aria-hidden="true" />
-                <span>발표</span>
-              </button>
-            </div>
-          </section>
-        )}
-
-        {activeStep === 2 && visibleStep >= 2 && (
           <section className="panel-block plan-step is-active" ref={itemsRef}>
             <div className="plan-step-head">
-              <span className="plan-step-index">2</span>
+              <span className="plan-step-index">1</span>
               <Table2 size={18} aria-hidden="true" />
               <span>표의 항목 정하기</span>
             </div>
@@ -1081,7 +1347,7 @@ function PlanWorkspace({
                     value={item}
                     onChange={(event) => updateItem(index, event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === 'Enter' && itemsComplete) goToStep(3, graphRef);
+                      if (event.key === 'Enter' && itemsComplete) goToStep(2, titleRef);
                     }}
                     placeholder={`항목 ${index + 1}`}
                     aria-label={`항목 ${index + 1}`}
@@ -1101,16 +1367,6 @@ function PlanWorkspace({
             </div>
             <div className="plan-item-actions">
               <button
-                className="plan-previous-button"
-                type="button"
-                onClick={() => goToStep(1, titleRef)}
-                title="이전"
-                aria-label="이전: 제목"
-              >
-                <ChevronLeft size={18} aria-hidden="true" />
-                <span>이전</span>
-              </button>
-              <button
                 className="plan-add-button"
                 type="button"
                 onClick={addItem}
@@ -1124,85 +1380,121 @@ function PlanWorkspace({
               <button
                 className="plan-next-button"
                 type="button"
-                onClick={() => goToStep(3, graphRef)}
+                onClick={() => goToStep(2, titleRef)}
                 onPointerDown={(event) => {
                   if (!itemsComplete) return;
                   event.preventDefault();
-                  goToStep(3, graphRef);
+                  goToStep(2, titleRef);
                 }}
-                onKeyDown={(event) => handleAdvanceKey(event, 3, graphRef)}
+                onKeyDown={(event) => handleAdvanceKey(event, 2, titleRef)}
                 disabled={!itemsComplete}
                 title="다음"
-                aria-label="다음: 그래프"
+                aria-label="다음: 표 이름"
               >
                 <span>다음</span>
                 <ChevronRight size={18} aria-hidden="true" />
               </button>
             </div>
           </section>
+        ) : activeStep < 3 ? (
+          <div className="plan-summary-row" ref={itemsRef}>
+            <Table2 size={18} aria-hidden="true" />
+            <span>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</span>
+          </div>
+        ) : null}
+
+        {activeStep === 2 && visibleStep >= 2 && (
+          <section className="panel-block plan-step is-active" ref={titleRef}>
+            <div className="plan-step-head">
+              <span className="plan-step-index">2</span>
+              <PenLine size={18} aria-hidden="true" />
+              <span>표의 이름 정하기</span>
+            </div>
+            <div className="plan-title-row">
+              <input
+                className="text-input plan-title-input"
+                value={title}
+                onChange={(event) => updateTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && titleComplete) goToStep(3, planSheetRef);
+                }}
+                placeholder="표 이름"
+                aria-label="표 이름"
+              />
+              <button
+                className="plan-next-button"
+                type="button"
+                onClick={() => goToStep(3, planSheetRef)}
+                onPointerDown={(event) => {
+                  if (!titleComplete) return;
+                  event.preventDefault();
+                  goToStep(3, planSheetRef);
+                }}
+                onKeyDown={(event) => handleAdvanceKey(event, 3, planSheetRef)}
+                disabled={!titleComplete}
+                title="다음"
+                aria-label="다음: 자료 정리 계획서"
+              >
+                <span>다음</span>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="plan-step-actions">
+              <button
+                className="plan-previous-button"
+                type="button"
+                onClick={() => goToStep(1, itemsRef)}
+                title="이전"
+                aria-label="이전: 항목"
+              >
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>이전</span>
+              </button>
+            </div>
+          </section>
         )}
 
         {activeStep === 3 && visibleStep >= 3 && (
-          <>
-            <div className="plan-summary-row" ref={itemsRef}>
-              <Table2 size={18} aria-hidden="true" />
-              <span>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</span>
+          <section className="panel-block plan-sheet-screen" ref={planSheetRef}>
+            <h2 className="plan-sheet-title">&lt;자료 정리 계획서&gt;</h2>
+            <div className="plan-sheet-list">
+              <div className="plan-sheet-row">
+                <Table2 size={18} aria-hidden="true" />
+                <span>항목</span>
+                <strong>{items.map((item, index) => summaryText(item, `항목 ${index + 1}`)).join(', ')}</strong>
+              </div>
+              <div className="plan-sheet-row">
+                <PenLine size={18} aria-hidden="true" />
+                <span>표 이름</span>
+                <strong>{summaryText(title, '표 이름')}</strong>
+              </div>
             </div>
-            <section className="panel-block plan-step is-active" ref={graphRef}>
-              <div className="plan-step-head">
-                <span className="plan-step-index">3</span>
-                <PieChart size={18} aria-hidden="true" />
-                <span>그래프 종류 선택</span>
-              </div>
-              <div className="plan-graph-options">
-                <button
-                  className={`plan-graph-button ${graph.type === 'bar' ? 'is-active' : ''}`}
-                  type="button"
-                  onClick={() => chooseGraphType('bar')}
-                  aria-pressed={graph.type === 'bar'}
-                >
-                  <Grid3X3 size={18} aria-hidden="true" />
-                  <span>띠그래프</span>
-                </button>
-                <button
-                  className={`plan-graph-button ${graph.type === 'pie' ? 'is-active' : ''}`}
-                  type="button"
-                  onClick={() => chooseGraphType('pie')}
-                  aria-pressed={graph.type === 'pie'}
-                >
-                  <Circle size={18} aria-hidden="true" />
-                  <span>원그래프</span>
-                </button>
-              </div>
-              <div className="plan-step-actions">
-                <button
-                  className="plan-previous-button"
-                  type="button"
-                  onClick={() => goToStep(2, itemsRef)}
-                  title="이전"
-                  aria-label="이전: 항목"
-                >
-                  <ChevronLeft size={18} aria-hidden="true" />
-                  <span>이전</span>
-                </button>
-                <button
-                  className="plan-next-button"
-                  type="button"
-                  onClick={() => goToStep(4, planSheetRef)}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    goToStep(4, planSheetRef);
-                  }}
-                  onKeyDown={(event) => handleAdvanceKey(event, 4, planSheetRef)}
-                  title="다음"
-                  aria-label="다음: 자료 정리 계획서"
-                >
-                  <span>다음</span>
-                  <ChevronRight size={18} aria-hidden="true" />
-                </button>
-              </div>
-            </section>
-          </>
+            {presentationVisible && (
+              <p className="presentation-script" aria-live="polite">{presentationSentence}</p>
+            )}
+            <div className="plan-step-actions">
+              <button
+                className="plan-previous-button"
+                type="button"
+                onClick={() => goToStep(2, titleRef)}
+                title="이전"
+                aria-label="이전: 표 이름"
+              >
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>이전</span>
+              </button>
+              <button
+                className="plan-present-button"
+                type="button"
+                onClick={onShowPresentation}
+                title="발표"
+                aria-label="발표 문장 채우기"
+              >
+                <Megaphone size={18} aria-hidden="true" />
+                <span>발표</span>
+              </button>
+            </div>
+          </section>
         )}
       </div>
     </div>
@@ -1408,21 +1700,19 @@ function ReportDialog({ plan, table, graph, onClose }) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  function saveReportImage() {
+  async function saveReportImage() {
     if (saving) return;
     setSaving(true);
     setMessage('');
 
     try {
+      await ensureReportFontsReady();
       const image = makeReportImage({ title, headerRow, rows, tableWidth, graph });
-      saveReportImageFile(image)
-        .then((nextMessage) => {
-          if (nextMessage) setMessage(nextMessage);
-        })
-        .catch(() => setMessage('이미지를 저장하지 못했습니다.'))
-        .finally(() => setSaving(false));
+      const nextMessage = await saveReportImageFile(image);
+      if (nextMessage) setMessage(nextMessage);
     } catch (error) {
       setMessage('이미지를 만들지 못했습니다.');
+    } finally {
       setSaving(false);
     }
   }
@@ -1473,30 +1763,45 @@ function FinalReport({ title, headerRow, rows, tableWidth, graph }) {
 }
 
 function ReportGraph({ graph }) {
+  return (
+    <div className="report-graph-frame" aria-label="보고서 그래프">
+      {GRAPH_DISPLAY_TYPES.map((type) => (
+        <ReportGraphCanvas key={type} graph={graph} type={type} />
+      ))}
+    </div>
+  );
+}
+
+function ReportGraphCanvas({ graph, type }) {
   const [frameRef, frameSize] = useElementSize();
-  const segments = getSegments(graph.dividers);
-  const graphClassName = `report-graph-frame is-${graph.type === 'pie' ? 'pie' : 'bar'}`;
+  const renderGraph = getRenderableGraph(graph, type);
+  const segments = getSegments(renderGraph.dividers);
+  const targetSvgRect = getReportPreviewGraphSvgRect(type, frameSize);
+  const visualScale = getReportGraphObjectScale(type, frameSize, targetSvgRect);
+  const sourceFrameSize = getCanonicalGraphEditFrame();
+  const projectReportPoint = (x, y) => projectGraphCanvasPointPercent(type, x, y, frameSize, targetSvgRect);
 
   return (
-    <div className={graphClassName} ref={frameRef} aria-label="보고서 그래프">
-      {graph.type === 'bar' ? (
-        <BarGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
-      ) : (
-        <PieGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
-      )}
-      {(Array.isArray(graph.labels) ? graph.labels : []).map((rawLabel) => {
-        const label = normalizeGraphLabel(rawLabel);
+    <div className={`report-graph-canvas is-${type}`} ref={frameRef} aria-label={getGraphTypeLabel(type)}>
+      <SingleGraphDisplay graph={renderGraph} segments={segments} />
+      <GraphArrowLayer arrows={renderGraph.arrows} visualScale={visualScale} pointProjector={projectReportPoint} />
+      {(Array.isArray(renderGraph.labels) ? renderGraph.labels : []).map((rawLabel) => {
+        const {
+          label,
+          labelWidth,
+          labelHeight,
+          fontSize
+        } = getDisplayLabelMetrics(rawLabel, frameSize, { visualScale, sourceFrameSize });
+        const projectedLabel = projectReportPoint(label.x, label.y);
         if (!label.text.trim()) return null;
-        const maxLabelWidth = getCanvasLabelMaxWidth(frameSize);
-        const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, maxLabelWidth);
-        const labelHeight = getLabelBoxHeightForText(label.text, label.fontSize, labelWidth, null);
         return (
           <div
             key={label.id}
             className="graph-label-frame report-label-frame"
             style={{
-              left: `clamp(${labelWidth / 2}px, ${label.x}%, calc(100% - ${labelWidth / 2}px))`,
-              top: `clamp(${labelHeight / 2}px, ${label.y}%, calc(100% - ${labelHeight / 2}px))`,
+              left: `clamp(${labelWidth / 2}px, ${projectedLabel.x}%, calc(100% - ${labelWidth / 2}px))`,
+              top: `clamp(${labelHeight / 2}px, ${projectedLabel.y}%, calc(100% - ${labelHeight / 2}px))`,
+              minWidth: `${labelWidth}px`,
               width: `${labelWidth}px`,
               height: `${labelHeight}px`
             }}
@@ -1505,7 +1810,7 @@ function ReportGraph({ graph }) {
               className="graph-floating-label report-floating-label"
               style={{
                 color: label.color,
-                fontSize: `${label.fontSize}px`,
+                fontSize: `${fontSize}px`,
                 height: `${labelHeight}px`,
                 textShadow: label.color === '#ffffff'
                   ? '0 1px 3px rgba(0, 0, 0, 0.72)'
@@ -1547,34 +1852,45 @@ function makeReportImage(report) {
   };
 }
 
+async function ensureReportFontsReady() {
+  if (typeof document === 'undefined' || !document.fonts) return;
+  try {
+    await document.fonts.load(REPORT_IMAGE_TITLE_FONT_LOAD);
+    await document.fonts.ready;
+  } catch {
+    // The report still saves with the fallback font if the web font is unavailable.
+  }
+}
+
 function drawReportImage(context, report) {
   const titleRect = {
     x: REPORT_IMAGE_MARGIN,
-    y: 58,
+    y: 42,
     width: REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2,
-    height: 92
+    height: 112
   };
   const tableRect = {
     x: REPORT_IMAGE_MARGIN,
-    y: 164,
+    y: 176,
     width: REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2,
     height: 186
   };
   const graphRect = {
     x: REPORT_IMAGE_MARGIN,
-    y: 392,
+    y: tableRect.y + tableRect.height + 14,
     width: REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2,
-    height: REPORT_IMAGE_HEIGHT - 392 - REPORT_IMAGE_MARGIN
+    height: REPORT_IMAGE_HEIGHT - (tableRect.y + tableRect.height + 14) - REPORT_IMAGE_MARGIN
   };
 
   context.save();
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, REPORT_IMAGE_WIDTH, REPORT_IMAGE_HEIGHT);
   drawCanvasTextBox(context, report.title || '최종 보고서', titleRect, {
-    align: 'left',
-    fontSize: 48,
-    minFontSize: 30,
-    weight: 900,
+    align: 'center',
+    fontSize: 76,
+    minFontSize: 44,
+    weight: 400,
+    fontFamily: REPORT_IMAGE_TITLE_FONT_FAMILY,
     maxLines: 2
   });
   drawReportImageTable(context, report.headerRow, report.rows, tableRect);
@@ -1633,23 +1949,77 @@ function getReportImageColumnWidths(columnCount, totalWidth) {
 
 function drawReportImageGraph(context, graph, rect) {
   const safeGraph = graph || {};
-  const segments = getSegments(safeGraph.dividers);
   context.save();
   context.fillStyle = '#ffffff';
   context.fillRect(rect.x, rect.y, rect.width, rect.height);
-  if (safeGraph.type === 'bar') {
-    drawReportBarImage(context, safeGraph, segments, rect);
-  } else {
-    drawReportPieImage(context, safeGraph, segments, rect);
-  }
-  drawReportImageLabels(context, safeGraph, rect);
+
+  getReportImageGraphLayout(rect).forEach(({ type, graphRect }) => {
+    drawReportImageSingleGraph(context, safeGraph, type, graphRect);
+  });
   context.restore();
 }
 
-function drawReportBarImage(context, graph, segments, rect) {
-  const scale = Math.min((rect.width * 0.96) / BAR_GRAPH_VIEWBOX.width, (rect.height * 0.78) / BAR_GRAPH_VIEWBOX.height);
-  const originX = rect.x + (rect.width - BAR_GRAPH_VIEWBOX.width * scale) / 2;
-  const originY = rect.y + (rect.height - BAR_GRAPH_VIEWBOX.height * scale) / 2;
+function getReportImageGraphLayout(rect) {
+  const pieSize = Math.min(rect.height * 0.76, rect.width * 0.39);
+  const barWidth = Math.min(rect.width * 0.58, rect.width - pieSize * 0.55);
+  const barHeight = Math.min(rect.height * 0.62, barWidth / GRAPH_DISPLAY_ASPECT_RATIO);
+  const overlap = Math.min(REPORT_IMAGE_GRAPH_OVERLAP, pieSize * 0.08);
+  const totalWidth = barWidth + pieSize - overlap;
+  const startX = rect.x + Math.max(0, (rect.width - totalWidth) / 2);
+  return [
+    {
+      type: 'bar',
+      graphRect: {
+        x: startX,
+        y: rect.y,
+        width: barWidth,
+        height: barHeight
+      }
+    },
+    {
+      type: 'pie',
+      graphRect: {
+        x: startX + barWidth - overlap,
+        y: rect.y,
+        width: pieSize,
+        height: pieSize
+      }
+    }
+  ];
+}
+
+function drawReportImageSingleGraph(context, graph, type, rect) {
+  const renderGraph = getRenderableGraph(graph, type);
+  const segments = getSegments(renderGraph.dividers);
+  const targetSvgRect = getReportImageGraphSvgRect(type, rect);
+  if (type === 'pie') {
+    drawReportPieImage(context, renderGraph, segments, rect, targetSvgRect);
+  } else {
+    drawReportBarImage(context, renderGraph, segments, rect, targetSvgRect);
+  }
+  drawReportImageArrows(context, renderGraph, rect, targetSvgRect);
+  drawReportImageLabels(context, renderGraph, rect, targetSvgRect);
+}
+
+function fitAspectRect(rect, aspectRatio) {
+  let width = rect.width;
+  let height = width / aspectRatio;
+  if (height > rect.height) {
+    height = rect.height;
+    width = height * aspectRatio;
+  }
+  return {
+    x: rect.x + (rect.width - width) / 2,
+    y: rect.y + (rect.height - height) / 2,
+    width,
+    height
+  };
+}
+
+function drawReportBarImage(context, graph, segments, rect, targetSvgRect = getReportImageGraphSvgRect('bar', rect)) {
+  const scale = targetSvgRect.width / BAR_GRAPH_VIEWBOX.width;
+  const originX = rect.x + targetSvgRect.x;
+  const originY = rect.y + targetSvgRect.y;
   const viewX = (value) => originX + value * scale;
   const viewY = (value) => originY + value * scale;
   const box = {
@@ -1698,10 +2068,10 @@ function drawReportBarImage(context, graph, segments, rect) {
   });
 }
 
-function drawReportPieImage(context, graph, segments, rect) {
-  const scale = Math.min(rect.width * 0.58, rect.height * 0.92) / 100;
-  const centerX = rect.x + rect.width / 2;
-  const centerY = rect.y + rect.height / 2;
+function drawReportPieImage(context, graph, segments, rect, targetSvgRect = getReportImageGraphSvgRect('pie', rect)) {
+  const scale = targetSvgRect.width / 100;
+  const centerX = rect.x + targetSvgRect.x + targetSvgRect.width / 2;
+  const centerY = rect.y + targetSvgRect.y + targetSvgRect.height / 2;
   const radius = PIE_GRAPH_CIRCLE.radius * scale;
   const scaleValue = normalizeGraphScale(graph.scale);
   const labelTicks = makePercentLabelTicks(scaleValue, 'pie');
@@ -1743,19 +2113,22 @@ function drawReportPieImage(context, graph, segments, rect) {
   });
 }
 
-function drawReportImageLabels(context, graph, rect) {
-  const labelScale = rect.width / REPORT_IMAGE_LOGICAL_WIDTH;
+function drawReportImageLabels(context, graph, rect, targetSvgRect = getReportImageGraphSvgRect(graph.type, rect)) {
+  const frameSize = { width: rect.width, height: rect.height };
+  const labelScale = getReportGraphObjectScale(graph.type, frameSize, targetSvgRect);
+  const sourceFrameSize = getCanonicalGraphEditFrame();
   const labels = Array.isArray(graph.labels) ? graph.labels : [];
   labels.forEach((rawLabel) => {
     const label = normalizeGraphLabel(rawLabel);
     if (!label.text.trim()) return;
 
-    const sourceWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, MAX_LABEL_WIDTH);
+    const sourceWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, getCanvasLabelMaxWidth(sourceFrameSize));
     const sourceHeight = getLabelBoxHeightForText(label.text, label.fontSize, sourceWidth, null);
     const labelWidth = sourceWidth * labelScale;
     const labelHeight = sourceHeight * labelScale;
-    const centerX = rect.x + rect.width * (label.x / 100);
-    const centerY = rect.y + rect.height * (label.y / 100);
+    const projectedLabel = projectGraphCanvasPoint(graph.type, label.x, label.y, frameSize, targetSvgRect);
+    const centerX = rect.x + projectedLabel.x;
+    const centerY = rect.y + projectedLabel.y;
     const left = clamp(centerX - labelWidth / 2, rect.x, rect.x + rect.width - labelWidth);
     const top = clamp(centerY - labelHeight / 2, rect.y, rect.y + rect.height - labelHeight);
 
@@ -1780,6 +2153,23 @@ function drawReportImageLabels(context, graph, rect) {
   });
 }
 
+function drawReportImageArrows(context, graph, rect, targetSvgRect = getReportImageGraphSvgRect(graph.type, rect)) {
+  const frameSize = { width: rect.width, height: rect.height };
+  const visualScale = getReportGraphObjectScale(graph.type, frameSize, targetSvgRect);
+  sanitizeGraphArrows(graph.arrows).forEach((arrow) => {
+    const start = projectGraphCanvasPoint(graph.type, arrow.x1, arrow.y1, frameSize, targetSvgRect);
+    const end = projectGraphCanvasPoint(graph.type, arrow.x2, arrow.y2, frameSize, targetSvgRect);
+    drawCanvasArrow(
+      context,
+      rect.x + start.x,
+      rect.y + start.y,
+      rect.x + end.x,
+      rect.y + end.y,
+      visualScale
+    );
+  });
+}
+
 function isVisibleReportFill(color) {
   return typeof color === 'string' && color && color !== 'transparent' && color !== 'rgba(255,255,255,0)';
 }
@@ -1798,7 +2188,7 @@ function drawCanvasTextBox(context, text, rect, options = {}) {
   let lines = [];
 
   for (; fontSize >= minFontSize; fontSize -= 1) {
-    setReportCanvasFont(context, fontSize, weight);
+    setReportCanvasFont(context, fontSize, weight, options.fontFamily);
     const lineHeight = fontSize * lineHeightRatio;
     const maxLines = explicitMaxLines || Math.max(1, Math.floor(rect.height / lineHeight));
     const wrapped = wrapCanvasText(context, cleanText, rect.width);
@@ -1809,7 +2199,7 @@ function drawCanvasTextBox(context, text, rect, options = {}) {
   }
 
   fontSize = Math.max(fontSize, minFontSize);
-  setReportCanvasFont(context, fontSize, weight);
+  setReportCanvasFont(context, fontSize, weight, options.fontFamily);
   const lineHeight = fontSize * lineHeightRatio;
   const maxLines = explicitMaxLines || Math.max(1, Math.floor(rect.height / lineHeight));
   if (!lines.length) lines = truncateCanvasLines(context, wrapCanvasText(context, cleanText, rect.width), maxLines, rect.width);
@@ -1903,8 +2293,8 @@ function fitCanvasTextWithEllipsis(context, text, maxWidth) {
   return characters.length ? `${characters.join('')}${ellipsis}` : ellipsis;
 }
 
-function setReportCanvasFont(context, fontSize, weight) {
-  context.font = `${weight} ${fontSize}px ${REPORT_IMAGE_FONT_FAMILY}`;
+function setReportCanvasFont(context, fontSize, weight, fontFamily = REPORT_IMAGE_FONT_FAMILY) {
+  context.font = `${weight} ${fontSize}px ${fontFamily}`;
 }
 
 function drawCanvasLine(context, x1, y1, x2, y2, color, lineWidth) {
@@ -1915,6 +2305,47 @@ function drawCanvasLine(context, x1, y1, x2, y2, color, lineWidth) {
   context.moveTo(x1, y1);
   context.lineTo(x2, y2);
   context.stroke();
+  context.restore();
+}
+
+function drawCanvasArrow(context, x1, y1, x2, y2, visualScale = 1) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const length = Math.hypot(dx, dy);
+  if (length < 2) return;
+  const arrowScale = Number.isFinite(Number(visualScale)) && Number(visualScale) > 0 ? Number(visualScale) : 1;
+
+  context.save();
+  context.translate(x1, y1);
+  context.rotate(Math.atan2(dy, dx));
+
+  const outlineHeadLength = clamp(length * 0.34, 18 * arrowScale, 32 * arrowScale);
+  const fillHeadLength = Math.max(12 * arrowScale, outlineHeadLength - 7 * arrowScale);
+  drawCanvasHorizontalArrow(context, length, GRAPH_ARROW_OUTLINE_COLOR, 10 * arrowScale, outlineHeadLength, 13 * arrowScale);
+  drawCanvasHorizontalArrow(context, length, GRAPH_LINE_COLOR, 4.8 * arrowScale, fillHeadLength, 6.5 * arrowScale);
+  context.restore();
+}
+
+function drawCanvasHorizontalArrow(context, length, color, lineWidth, headLength, headHalfHeight) {
+  const headBase = Math.max(0, length - headLength);
+  const shaftEnd = Math.max(0, length - headLength * 0.58);
+
+  context.save();
+  context.strokeStyle = color;
+  context.fillStyle = color;
+  context.lineWidth = lineWidth;
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  context.beginPath();
+  context.moveTo(0, 0);
+  context.lineTo(shaftEnd, 0);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(length, 0);
+  context.lineTo(headBase, -headHalfHeight);
+  context.lineTo(headBase, headHalfHeight);
+  context.closePath();
+  context.fill();
   context.restore();
 }
 
@@ -2085,55 +2516,78 @@ function isIosSafari() {
 }
 
 function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
-  const canvasRef = useRef(null);
-  const segments = getSegments(graph.dividers);
-  const canUndoGraphAction = Array.isArray(graph.undoStack) && graph.undoStack.length > 0;
+  const graphState = normalizeGraphState(graph);
+  const activeType = normalizeGraphType(graphState.activeType, 'bar');
+  const activeDrawing = getGraphDrawing(graphState, activeType);
+  const activeRenderGraph = getRenderableGraph(graphState, activeType);
+  const activeGraphLabel = getGraphTypeLabel(activeType);
+  const canUndoGraphAction = Array.isArray(activeDrawing.undoStack) && activeDrawing.undoStack.length > 0;
 
   function setGraph(patch) {
     onChange((currentGraph) => {
-      const nextPatch = typeof patch === 'function' ? patch(currentGraph) : patch;
-      return { ...currentGraph, ...nextPatch };
+      const currentState = normalizeGraphState(currentGraph);
+      const nextPatch = typeof patch === 'function' ? patch(currentState) : patch;
+      return normalizeGraphState({ ...currentState, ...nextPatch });
     });
   }
 
-  function handleGraphPoint(point) {
-    if ((graph.mode === 'divide' || graph.mode === 'paint') && !point.insideGraph) return;
+  function updateGraphDrawing(type, patch) {
+    setGraph((currentGraph) => {
+      const drawing = getGraphDrawing(currentGraph, type);
+      const nextPatch = typeof patch === 'function' ? patch(drawing, currentGraph) : patch;
+      return {
+        activeType: type,
+        [type]: {
+          ...drawing,
+          ...nextPatch,
+          type
+        }
+      };
+    });
+  }
 
-    if (graph.mode === 'divide') {
-      setGraph((currentGraph) => {
-        const snapped = getSnappedDividerValue(currentGraph, point);
-        const currentDividers = Array.isArray(currentGraph.dividers) ? currentGraph.dividers : [];
+  function handleGraphPoint(type, point) {
+    if ((graphState.mode === 'divide' || graphState.mode === 'paint') && !point.insideGraph) return;
+
+    if (graphState.mode === 'divide') {
+      updateGraphDrawing(type, (currentDrawing, currentGraph) => {
+        const renderGraph = { ...currentDrawing, scale: currentGraph.scale, mode: currentGraph.mode, activeColor: currentGraph.activeColor };
+        const snapped = getSnappedDividerValue(renderGraph, point);
+        const currentDividers = Array.isArray(currentDrawing.dividers) ? currentDrawing.dividers : [];
         const hasDivider = currentDividers.indexOf(snapped) !== -1;
         const dividers = hasDivider
           ? currentDividers.filter((value) => value !== snapped)
           : sanitizeDividers(currentDividers.concat(snapped));
-        return withGraphUndo(currentGraph, { dividers });
+        return withGraphUndo(currentDrawing, { dividers });
       });
       return;
     }
 
-    if (graph.mode === 'paint') {
-      setGraph((currentGraph) => {
-        const currentSegments = getSegments(currentGraph.dividers);
-        const segment = findSegmentFromPoint(currentGraph, currentSegments, point);
+    if (graphState.mode === 'paint') {
+      updateGraphDrawing(type, (currentDrawing, currentGraph) => {
+        const renderGraph = { ...currentDrawing, scale: currentGraph.scale, mode: currentGraph.mode, activeColor: currentGraph.activeColor };
+        const currentSegments = getSegments(currentDrawing.dividers);
+        const segment = findSegmentFromPoint(renderGraph, currentSegments, point);
         if (!segment) return {};
         const activeColor = normalizeGraphActiveColor(currentGraph.activeColor);
         if (activeColor === GRAPH_ERASER_COLOR) {
-          if (!currentGraph.fills || !currentGraph.fills[segment.key]) return {};
-          const fills = cloneGraphFills(currentGraph.fills);
+          if (!currentDrawing.fills || !currentDrawing.fills[segment.key]) return {};
+          const fills = cloneGraphFills(currentDrawing.fills);
           delete fills[segment.key];
-          return withGraphUndo(currentGraph, { fills });
+          return withGraphUndo(currentDrawing, { fills });
         }
-        if (currentGraph.fills && currentGraph.fills[segment.key] === activeColor) return {};
-        return withGraphUndo(currentGraph, {
-          fills: { ...cloneGraphFills(currentGraph.fills), [segment.key]: activeColor }
+        if (currentDrawing.fills && currentDrawing.fills[segment.key] === activeColor) return {};
+        return withGraphUndo(currentDrawing, {
+          fills: { ...cloneGraphFills(currentDrawing.fills), [segment.key]: activeColor }
         });
       });
       return;
     }
 
-    setGraph((currentGraph) => ({
-      labels: currentGraph.labels.concat({
+    if (graphState.mode !== 'text') return;
+
+    updateGraphDrawing(type, (currentDrawing) => ({
+      labels: currentDrawing.labels.concat({
         id: makeId('label'),
         text: '',
         x: point.canvasX,
@@ -2145,35 +2599,69 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
     }));
   }
 
+  function addArrow(type, startPoint, endPoint) {
+    updateGraphDrawing(type, (currentDrawing) => {
+      const arrow = normalizeGraphArrow({
+        id: makeId('arrow'),
+        x1: startPoint.canvasX,
+        y1: startPoint.canvasY,
+        x2: endPoint.canvasX,
+        y2: endPoint.canvasY
+      });
+      if (getGraphArrowLength(arrow) < MIN_GRAPH_ARROW_LENGTH) return {};
+      return withGraphUndo(currentDrawing, {
+        arrows: sanitizeGraphArrows((currentDrawing.arrows || []).concat(arrow))
+      });
+    });
+  }
+
   function undoGraphAction() {
     if (!canUndoGraphAction) return;
-    setGraph((currentGraph) => {
-      const undoStack = sanitizeGraphUndoStack(currentGraph.undoStack);
+    updateGraphDrawing(activeType, (currentDrawing) => {
+      const undoStack = sanitizeGraphUndoStack(currentDrawing.undoStack);
       const previousSnapshot = undoStack[undoStack.length - 1];
       if (!previousSnapshot) return {};
       return {
         dividers: previousSnapshot.dividers.slice(),
         fills: { ...previousSnapshot.fills },
+        arrows: sanitizeGraphArrows(previousSnapshot.arrows),
         undoStack: undoStack.slice(0, -1)
       };
     });
   }
 
-  function updateLabel(labelId, patch) {
-    setGraph((currentGraph) => ({
-      labels: currentGraph.labels.map((label) => (label.id === labelId ? { ...label, ...patch } : label))
+  function updateLabel(type, labelId, patch) {
+    updateGraphDrawing(type, (currentDrawing) => ({
+      labels: currentDrawing.labels.map((label) => (label.id === labelId ? { ...label, ...patch } : label))
     }));
   }
 
-  function removeLabel(labelId) {
-    setGraph((currentGraph) => ({
-      labels: currentGraph.labels.filter((label) => label.id !== labelId)
+  function removeLabel(type, labelId) {
+    updateGraphDrawing(type, (currentDrawing) => ({
+      labels: currentDrawing.labels.filter((label) => label.id !== labelId)
+    }));
+  }
+
+  function updateArrow(type, arrowId, patch) {
+    updateGraphDrawing(type, (currentDrawing) => ({
+      arrows: sanitizeGraphArrows((currentDrawing.arrows || []).map((arrow) => (
+        arrow.id === arrowId ? { ...arrow, ...patch, id: arrow.id } : arrow
+      )))
+    }));
+  }
+
+  function removeArrow(type, arrowId) {
+    updateGraphDrawing(type, (currentDrawing) => ({
+      arrows: (currentDrawing.arrows || []).filter((arrow) => arrow.id !== arrowId)
     }));
   }
 
   function resetGraph() {
-    if (window.confirm('그래프에 그린 선, 색, 글자를 모두 지울까요?')) {
-      setGraph({ dividers: [], fills: {}, labels: [], undoStack: [] });
+    if (window.confirm('두 그래프에 그린 선, 색, 글자를 모두 지울까요?')) {
+      setGraph({
+        bar: createDefaultGraphDrawing('bar'),
+        pie: createDefaultGraphDrawing('pie')
+      });
     }
   }
 
@@ -2183,33 +2671,50 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
 
       <div className="workspace-grid graph-layout">
         <aside className="tool-rail">
+          <SectionTitle icon={PieChart} title="그래프 종류" />
+          <SegmentedControl
+            className="graph-type-control"
+            value={activeType}
+            onChange={(value) => setGraph({ activeType: value })}
+            items={[
+              { value: 'bar', label: '띠그래프', icon: RectangleHorizontal },
+              { value: 'pie', label: '원그래프', icon: Circle }
+            ]}
+          />
+
           <GraphScaleControl
-            scale={graph.scale}
+            scale={graphState.scale}
             onConfirm={(nextScale) => {
-              if (nextScale !== normalizeGraphScale(graph.scale)) {
-                setGraph({ scale: nextScale, dividers: [], fills: {}, undoStack: [] });
+              if (nextScale !== normalizeGraphScale(graphState.scale)) {
+                setGraph({
+                  scale: nextScale,
+                  bar: { ...graphState.bar, dividers: [], fills: {}, undoStack: [] },
+                  pie: { ...graphState.pie, dividers: [], fills: {}, undoStack: [] }
+                });
               }
             }}
           />
 
           <SectionTitle icon={MousePointer2} title="작업 모드" />
           <SegmentedControl
-            value={graph.mode}
+            className="graph-mode-control"
+            value={graphState.mode}
             onChange={(value) => setGraph({ mode: value })}
             items={[
               { value: 'divide', label: '나누기', icon: PenLine },
               { value: 'paint', label: '색칠하기', icon: PaintBucket },
-              { value: 'text', label: '글자', icon: ALargeSmall }
+              { value: 'text', label: '글자', icon: ALargeSmall },
+              { value: 'arrow', label: '화살표', icon: ArrowUpRight }
             ]}
           />
 
-          {graph.mode === 'paint' && (
+          {graphState.mode === 'paint' && (
             <div className="swatch-block graph-swatches" aria-label="그래프 색">
               {GRAPH_COLORS.map((color) => (
                 <button
                   key={color}
                   type="button"
-                  className={`swatch ${graph.activeColor === color ? 'is-active' : ''}`}
+                  className={`swatch ${graphState.activeColor === color ? 'is-active' : ''}`}
                   style={{ backgroundColor: color }}
                   onClick={() => setGraph({ activeColor: color })}
                   title="색 선택"
@@ -2218,7 +2723,7 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
               ))}
               <button
                 type="button"
-                className={`swatch is-eraser ${graph.activeColor === GRAPH_ERASER_COLOR ? 'is-active' : ''}`}
+                className={`swatch is-eraser ${graphState.activeColor === GRAPH_ERASER_COLOR ? 'is-active' : ''}`}
                 style={{ backgroundColor: GRAPH_ERASER_COLOR }}
                 onClick={() => setGraph({ activeColor: GRAPH_ERASER_COLOR })}
                 title="색 지우개"
@@ -2256,15 +2761,22 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
         </aside>
 
         <div className="graph-main">
-          <GraphCanvas
-            ref={canvasRef}
-            graph={graph}
-            segments={segments}
-            onPoint={handleGraphPoint}
-            onLabelChange={updateLabel}
-            onLabelRemove={removeLabel}
-          />
-
+          <div className="graph-canvas-grid">
+            <div className={`graph-canvas-panel is-${activeType}`}>
+              <span className="graph-canvas-label">{activeGraphLabel}</span>
+              <GraphCanvas
+                graph={activeRenderGraph}
+                segments={getSegments(activeRenderGraph.dividers)}
+                onActivate={() => setGraph({ activeType })}
+                onPoint={(point) => handleGraphPoint(activeType, point)}
+                onArrowAdd={(startPoint, endPoint) => addArrow(activeType, startPoint, endPoint)}
+                onArrowChange={(arrowId, patch) => updateArrow(activeType, arrowId, patch)}
+                onArrowRemove={(arrowId) => removeArrow(activeType, arrowId)}
+                onLabelChange={(labelId, patch) => updateLabel(activeType, labelId, patch)}
+                onLabelRemove={(labelId) => removeLabel(activeType, labelId)}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2335,83 +2847,63 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange }) {
           <li className="interpret-sentence">
             <span className="sentence-number">3</span>
             <SentenceBlank
-              value={currentAnswers.compareLeftItem}
-              onChange={(value) => setAnswer('compareLeftItem', value)}
+              value={currentAnswers.compareMoreLeftItem}
+              onChange={(value) => setAnswer('compareMoreLeftItem', value)}
               label="3번 첫 번째 항목"
             />
             <span>을</span>
             <SentenceBlank
-              value={currentAnswers.compareLeftAction}
-              onChange={(value) => setAnswer('compareLeftAction', value)}
+              value={currentAnswers.compareMoreLeftAction}
+              onChange={(value) => setAnswer('compareMoreLeftAction', value)}
               label="3번 첫 번째 행동"
             />
             <span>하는 학생은</span>
             <SentenceBlank
-              value={currentAnswers.compareRightItem}
-              onChange={(value) => setAnswer('compareRightItem', value)}
+              value={currentAnswers.compareMoreRightItem}
+              onChange={(value) => setAnswer('compareMoreRightItem', value)}
               label="3번 두 번째 항목"
             />
             <span>을</span>
             <SentenceBlank
-              value={currentAnswers.compareRightAction}
-              onChange={(value) => setAnswer('compareRightAction', value)}
+              value={currentAnswers.compareMoreRightAction}
+              onChange={(value) => setAnswer('compareMoreRightAction', value)}
               label="3번 두 번째 행동"
             />
             <span>하는 학생보다</span>
-            <RelationChoice
-              value={currentAnswers.compareRelation}
-              onChange={(value) => setAnswer('compareRelation', value)}
-            />
-            <span>.</span>
+            <span>많습니다.</span>
           </li>
 
           <li className="interpret-sentence">
             <span className="sentence-number">4</span>
-            <span>전체 학생 중</span>
             <SentenceBlank
-              value={currentAnswers.ratioItem}
-              onChange={(value) => setAnswer('ratioItem', value)}
-              label="4번 항목"
+              value={currentAnswers.compareLessLeftItem}
+              onChange={(value) => setAnswer('compareLessLeftItem', value)}
+              label="4번 첫 번째 항목"
             />
             <span>을</span>
             <SentenceBlank
-              value={currentAnswers.ratioAction}
-              onChange={(value) => setAnswer('ratioAction', value)}
-              label="4번 행동"
+              value={currentAnswers.compareLessLeftAction}
+              onChange={(value) => setAnswer('compareLessLeftAction', value)}
+              label="4번 첫 번째 행동"
             />
             <span>하는 학생은</span>
             <SentenceBlank
-              value={currentAnswers.ratioPercent}
-              onChange={(value) => setAnswer('ratioPercent', value)}
-              label="4번 비율"
-              short
-              inputMode="decimal"
+              value={currentAnswers.compareLessRightItem}
+              onChange={(value) => setAnswer('compareLessRightItem', value)}
+              label="4번 두 번째 항목"
             />
-            <span>%입니다.</span>
+            <span>을</span>
+            <SentenceBlank
+              value={currentAnswers.compareLessRightAction}
+              onChange={(value) => setAnswer('compareLessRightAction', value)}
+              label="4번 두 번째 행동"
+            />
+            <span>하는 학생보다</span>
+            <span>적습니다.</span>
           </li>
         </ol>
       </form>
     </div>
-  );
-}
-
-function RelationChoice({ value, onChange }) {
-  const normalizedValue = value === '적습니다' ? '적습니다' : '많습니다';
-  const choices = ['많습니다', '적습니다'];
-  return (
-    <span className="relation-choice" role="group" aria-label="3번 비교 결과">
-      {choices.map((choice) => (
-        <button
-          key={choice}
-          className={`relation-choice-button ${normalizedValue === choice ? 'is-active' : ''}`}
-          type="button"
-          aria-pressed={normalizedValue === choice}
-          onClick={() => onChange(choice)}
-        >
-          {choice}
-        </button>
-      ))}
-    </span>
   );
 }
 
@@ -2435,23 +2927,33 @@ function SentenceBlank({ value, onChange, label, short = false, inputMode }) {
 }
 
 function StaticGraphCanvas({ graph }) {
+  return (
+    <div className="static-graph-stack" aria-label="해석할 그래프">
+      {GRAPH_DISPLAY_TYPES.map((type) => (
+        <StaticSingleGraphCanvas key={type} graph={graph} type={type} />
+      ))}
+    </div>
+  );
+}
+
+function StaticSingleGraphCanvas({ graph, type }) {
   const [frameRef, frameSize] = useElementSize();
-  const segments = getSegments(graph.dividers);
-  const graphClassName = `static-graph-canvas is-${graph.type === 'pie' ? 'pie' : 'bar'}`;
+  const renderGraph = getRenderableGraph(graph, type);
+  const segments = getSegments(renderGraph.dividers);
+  const visualScale = getDisplayGraphVisualScale(frameSize);
 
   return (
-    <div className={graphClassName} ref={frameRef} aria-label="해석할 그래프">
-      {graph.type === 'bar' ? (
-        <BarGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
-      ) : (
-        <PieGraph graph={graph} segments={segments} previewDivider={null} previewSegmentKey={null} />
-      )}
-      {(Array.isArray(graph.labels) ? graph.labels : []).map((rawLabel) => {
-        const label = normalizeGraphLabel(rawLabel);
+    <div className={`static-graph-canvas is-${type}`} ref={frameRef} aria-label={getGraphTypeLabel(type)}>
+      <SingleGraphDisplay graph={renderGraph} segments={segments} />
+      <GraphArrowLayer arrows={renderGraph.arrows} visualScale={visualScale} />
+      {(Array.isArray(renderGraph.labels) ? renderGraph.labels : []).map((rawLabel) => {
+        const {
+          label,
+          labelWidth,
+          labelHeight,
+          fontSize
+        } = getDisplayLabelMetrics(rawLabel, frameSize);
         if (!label.text.trim()) return null;
-        const maxLabelWidth = getCanvasLabelMaxWidth(frameSize);
-        const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, maxLabelWidth);
-        const labelHeight = getLabelBoxHeightForText(label.text, label.fontSize, labelWidth, null);
         return (
           <div
             key={label.id}
@@ -2459,6 +2961,7 @@ function StaticGraphCanvas({ graph }) {
             style={{
               left: `clamp(${labelWidth / 2}px, ${label.x}%, calc(100% - ${labelWidth / 2}px))`,
               top: `clamp(${labelHeight / 2}px, ${label.y}%, calc(100% - ${labelHeight / 2}px))`,
+              minWidth: `${labelWidth}px`,
               width: `${labelWidth}px`,
               height: `${labelHeight}px`
             }}
@@ -2467,7 +2970,7 @@ function StaticGraphCanvas({ graph }) {
               className="static-graph-label"
               style={{
                 color: label.color,
-                fontSize: `${label.fontSize}px`,
+                fontSize: `${fontSize}px`,
                 textShadow: label.color === '#ffffff'
                   ? '0 1px 3px rgba(0, 0, 0, 0.72)'
                   : '0 1px 2px rgba(255, 255, 255, 0.38)'
@@ -2482,24 +2985,31 @@ function StaticGraphCanvas({ graph }) {
   );
 }
 
-const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onPoint, onLabelChange, onLabelRemove }, ref) {
+const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onActivate, onPoint, onArrowAdd, onArrowChange, onArrowRemove, onLabelChange, onLabelRemove }, ref) {
   const canvasElementRef = useRef(null);
   const activeDividerDragRef = useRef(null);
+  const activeArrowDragRef = useRef(null);
+  const arrowActionRef = useRef(null);
   const labelActionRef = useRef(null);
   const labelInputRefs = useRef(new Map());
+  const onArrowChangeRef = useRef(onArrowChange);
   const onLabelChangeRef = useRef(onLabelChange);
+  const previousArrowIds = useRef(new Set(graph.arrows.map((arrow) => arrow.id)));
   const previousLabelIds = useRef(new Set(graph.labels.map((label) => label.id)));
   const [hoverPoint, setHoverPoint] = useState(null);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const [selectedArrowId, setSelectedArrowId] = useState(null);
   const [selectedLabelId, setSelectedLabelId] = useState(null);
+  const [editingLabelId, setEditingLabelId] = useState(null);
   const [dividerDragInput, setDividerDragInput] = useState(null);
+  const [previewArrow, setPreviewArrow] = useState(null);
   const previewDivider = hoverPoint && hoverPoint.insideGraph && graph.mode === 'divide'
     ? getSnappedDividerValue(graph, hoverPoint)
     : null;
   const previewSegment = hoverPoint && hoverPoint.insideGraph && graph.mode === 'paint'
     ? findSegmentFromPoint(graph, segments, hoverPoint)
     : null;
-  const readoutText = hoverPoint && hoverPoint.insideGraph && graph.mode !== 'text'
+  const readoutText = hoverPoint && hoverPoint.insideGraph && ['divide', 'paint'].includes(graph.mode)
     ? getPointReadout(graph, segments, hoverPoint)
     : '';
   const readoutStyle = hoverPoint
@@ -2508,6 +3018,10 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
       top: `${clamp(hoverPoint.canvasY - (dividerDragInput === 'touch' && graph.mode === 'divide' ? 13 : 8), 7, 93)}%`
     }
     : null;
+
+  useEffect(() => {
+    onArrowChangeRef.current = onArrowChange;
+  }, [onArrowChange]);
 
   useEffect(() => {
     onLabelChangeRef.current = onLabelChange;
@@ -2541,40 +3055,66 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   }, []);
 
   useEffect(() => {
+    const previousIds = previousArrowIds.current;
+    const nextArrow = graph.arrows.find((arrow) => arrow.id && !previousIds.has(arrow.id));
+    if (nextArrow && nextArrow.id) setSelectedArrowId(nextArrow.id);
+    previousArrowIds.current = new Set(graph.arrows.map((arrow) => arrow.id));
+  }, [graph.arrows]);
+
+  useEffect(() => {
     const previousIds = previousLabelIds.current;
     const nextLabel = graph.labels.find((label) => label.id && !previousIds.has(label.id));
-    if (nextLabel && nextLabel.id) setSelectedLabelId(nextLabel.id);
+    if (nextLabel && nextLabel.id) {
+      setSelectedLabelId(nextLabel.id);
+      if (!nextLabel.text) setEditingLabelId(nextLabel.id);
+    }
     previousLabelIds.current = new Set(graph.labels.map((label) => label.id));
   }, [graph.labels]);
 
   useEffect(() => {
+    if (selectedArrowId && !graph.arrows.some((arrow) => arrow.id === selectedArrowId)) {
+      setSelectedArrowId(null);
+    }
+  }, [graph.arrows, selectedArrowId]);
+
+  useEffect(() => {
     if (selectedLabelId && !graph.labels.some((label) => label.id === selectedLabelId)) {
       setSelectedLabelId(null);
+      setEditingLabelId(null);
     }
   }, [graph.labels, selectedLabelId]);
 
   useEffect(() => {
-    if (!selectedLabelId) return;
-    const input = labelInputRefs.current.get(selectedLabelId);
-    if (!input || input.value) return;
-    input.focus();
-    input.setSelectionRange(0, 0);
-  }, [selectedLabelId]);
+    if (editingLabelId && !graph.labels.some((label) => label.id === editingLabelId)) {
+      setEditingLabelId(null);
+    }
+  }, [editingLabelId, graph.labels]);
 
   useEffect(() => {
-    if (!selectedLabelId) return undefined;
+    if (!editingLabelId) return;
+    const input = labelInputRefs.current.get(editingLabelId);
+    if (!input) return;
+    input.focus();
+    const caretPosition = input.value.length;
+    input.setSelectionRange(caretPosition, caretPosition);
+  }, [editingLabelId]);
+
+  useEffect(() => {
+    if (!selectedLabelId && !selectedArrowId) return undefined;
 
     function handleDocumentPointerDown(event) {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (target.closest('.graph-label-frame')) return;
+      if (target.closest('.graph-arrow-item')) return;
       if (target.closest('.graph-canvas')) return;
       releaseLabelSelection();
+      releaseArrowSelection();
     }
 
     document.addEventListener('pointerdown', handleDocumentPointerDown, true);
     return () => document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
-  }, [graph.labels, selectedLabelId]);
+  }, [graph.arrows, graph.labels, selectedArrowId, selectedLabelId]);
 
   useEffect(() => {
     function handleDocumentLabelActionMove(event) {
@@ -2597,6 +3137,27 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     };
   }, []);
 
+  useEffect(() => {
+    function handleDocumentArrowActionMove(event) {
+      if (!arrowActionRef.current) return;
+      event.preventDefault();
+      updateArrowAction(event.clientX, event.clientY);
+    }
+
+    function handleDocumentArrowActionEnd() {
+      if (arrowActionRef.current) arrowActionRef.current = null;
+    }
+
+    document.addEventListener('pointermove', handleDocumentArrowActionMove, true);
+    document.addEventListener('pointerup', handleDocumentArrowActionEnd, true);
+    document.addEventListener('pointercancel', handleDocumentArrowActionEnd, true);
+    return () => {
+      document.removeEventListener('pointermove', handleDocumentArrowActionMove, true);
+      document.removeEventListener('pointerup', handleDocumentArrowActionEnd, true);
+      document.removeEventListener('pointercancel', handleDocumentArrowActionEnd, true);
+    };
+  }, []);
+
   function removeLabelIfEmpty(labelId) {
     const label = graph.labels.find((candidate) => candidate.id === labelId);
     if (label && label.text.trim() === '') onLabelRemove(labelId);
@@ -2608,20 +3169,39 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
       if (input && document.activeElement === input) input.blur();
       removeLabelIfEmpty(selectedLabelId);
     }
+    if (selectedLabelId !== nextLabelId) setEditingLabelId(null);
     setSelectedLabelId(nextLabelId);
   }
 
+  function releaseArrowSelection(nextArrowId = null) {
+    setSelectedArrowId(nextArrowId);
+  }
+
   function selectLabel(labelId) {
+    releaseArrowSelection();
     releaseLabelSelection(labelId);
+  }
+
+  function selectArrow(arrowId) {
+    releaseLabelSelection();
+    releaseArrowSelection(arrowId);
+  }
+
+  function beginLabelEditing(event, labelId) {
+    event.preventDefault();
+    event.stopPropagation();
+    onActivate();
+    selectLabel(labelId);
+    setEditingLabelId(labelId);
   }
 
   function pointFromEvent(clientX, clientY, target, options = {}) {
     const rect = target.getBoundingClientRect();
     const canvasX = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
     const canvasY = clamp(((clientY - rect.top) / rect.height) * 100, 0, 100);
-    const graphElement = target.querySelector(graph.type === 'bar' ? '.bar-svg' : '.pie-svg');
+    const graphElement = target.querySelector(graph.type === 'pie' ? '.pie-svg' : '.bar-svg');
     const graphRect = graphElement ? graphElement.getBoundingClientRect() : rect;
-    const svgHeight = graph.type === 'bar' ? BAR_GRAPH_VIEWBOX.height : 100;
+    const svgHeight = graph.type === 'pie' ? 100 : BAR_GRAPH_VIEWBOX.height;
     const rawSvgX = graphRect.width ? ((clientX - graphRect.left) / graphRect.width) * 100 : 0;
     const rawSvgY = graphRect.height ? ((clientY - graphRect.top) / graphRect.height) * svgHeight : 0;
     const svgX = clamp(rawSvgX, 0, 100);
@@ -2631,14 +3211,23 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     const pieDistance = Math.hypot(rawSvgX - PIE_GRAPH_CIRCLE.cx, rawSvgY - PIE_GRAPH_CIRCLE.cy);
     const barTolerance = options.relaxedDivider ? DIVIDER_DRAG_BAR_TOLERANCE : 0;
     const pieTolerance = options.relaxedDivider ? DIVIDER_DRAG_PIE_TOLERANCE : 0;
-    const insideGraph = graph.type === 'bar'
-      ? rawSvgX >= BAR_GRAPH_BOX.left
+    const insideGraph = graph.type === 'pie'
+      ? pieDistance <= PIE_GRAPH_CIRCLE.radius + pieTolerance
+      : rawSvgX >= BAR_GRAPH_BOX.left
         && rawSvgX <= BAR_GRAPH_BOX.left + BAR_GRAPH_BOX.width
         && rawSvgY >= BAR_GRAPH_BOX.top - barTolerance
-        && rawSvgY <= BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + barTolerance
-      : pieDistance <= PIE_GRAPH_CIRCLE.radius + pieTolerance;
+        && rawSvgY <= BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + barTolerance;
     const percentAngle = pointToPiePercent(rawSvgX, rawSvgY);
-    return { canvasX, canvasY, svgX, svgY, graphX, graphY, percentAngle, insideGraph };
+    return {
+      canvasX,
+      canvasY,
+      svgX,
+      svgY,
+      graphX,
+      graphY,
+      percentAngle,
+      insideGraph
+    };
   }
 
   function releaseDividerPointer(event) {
@@ -2649,6 +3238,16 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
         // Pointer capture may already be gone after cancellation or browser cleanup.
       }
     }
+  }
+
+  function makePreviewArrow(startPoint, endPoint) {
+    return normalizeGraphArrow({
+      id: 'preview-arrow',
+      x1: startPoint.canvasX,
+      y1: startPoint.canvasY,
+      x2: endPoint.canvasX,
+      y2: endPoint.canvasY
+    });
   }
 
   function updateDividerDragPoint(event, options = {}) {
@@ -2664,15 +3263,35 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
 
   function handlePointerDown(event) {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
-    if (selectedLabelId) {
+    onActivate();
+    if (selectedLabelId || selectedArrowId) {
       event.preventDefault();
       releaseLabelSelection();
+      releaseArrowSelection();
       setHoverPoint(null);
       return;
     }
 
     const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
     setHoverPoint(point.insideGraph ? point : null);
+
+    if (graph.mode === 'arrow') {
+      event.preventDefault();
+      activeArrowDragRef.current = {
+        pointerId: event.pointerId,
+        startPoint: point,
+        lastPoint: point
+      };
+      setPreviewArrow(makePreviewArrow(point, point));
+      if (event.currentTarget.setPointerCapture) {
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Some synthetic or interrupted pointer events cannot be captured.
+        }
+      }
+      return;
+    }
 
     if (graph.mode === 'divide') {
       event.preventDefault();
@@ -2697,6 +3316,15 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   }
 
   function handlePointerMove(event) {
+    if (activeArrowDragRef.current && activeArrowDragRef.current.pointerId === event.pointerId) {
+      event.preventDefault();
+      const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
+      activeArrowDragRef.current.lastPoint = point;
+      setPreviewArrow(makePreviewArrow(activeArrowDragRef.current.startPoint, point));
+      setHoverPoint(null);
+      return;
+    }
+
     if (graph.mode === 'divide' && activeDividerDragRef.current && activeDividerDragRef.current.pointerId === event.pointerId) {
       event.preventDefault();
       const point = updateDividerDragPoint(event, { allowLastPoint: true });
@@ -2709,6 +3337,18 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   }
 
   function handlePointerUp(event) {
+    if (activeArrowDragRef.current && activeArrowDragRef.current.pointerId === event.pointerId) {
+      event.preventDefault();
+      const dragState = activeArrowDragRef.current;
+      const point = pointFromEvent(event.clientX, event.clientY, event.currentTarget);
+      activeArrowDragRef.current = null;
+      setPreviewArrow(null);
+      releaseDividerPointer(event);
+      setHoverPoint(null);
+      if (onArrowAdd) onArrowAdd(dragState.startPoint, point);
+      return;
+    }
+
     if (graph.mode !== 'divide' || !activeDividerDragRef.current || activeDividerDragRef.current.pointerId !== event.pointerId) return;
     event.preventDefault();
     const point = updateDividerDragPoint(event, { allowLastPoint: true });
@@ -2720,6 +3360,14 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
   }
 
   function handlePointerCancel(event) {
+    if (activeArrowDragRef.current && activeArrowDragRef.current.pointerId === event.pointerId) {
+      activeArrowDragRef.current = null;
+      setPreviewArrow(null);
+      releaseDividerPointer(event);
+      setHoverPoint(null);
+      return;
+    }
+
     if (!activeDividerDragRef.current || activeDividerDragRef.current.pointerId !== event.pointerId) return;
     activeDividerDragRef.current = null;
     setDividerDragInput(null);
@@ -2736,9 +3384,90 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     }
   }
 
+  function startArrowAction(event, arrow, action) {
+    event.preventDefault();
+    event.stopPropagation();
+    onActivate();
+    const safeArrow = normalizeGraphArrow(arrow);
+    selectArrow(safeArrow.id);
+    const canvasRect = event.currentTarget.closest('.graph-canvas').getBoundingClientRect();
+    arrowActionRef.current = {
+      action,
+      arrowId: safeArrow.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      canvasRect,
+      arrow: safeArrow
+    };
+    if (event.currentTarget.setPointerCapture) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture can fail for synthetic or interrupted events.
+      }
+    }
+  }
+
+  function updateArrowAction(clientX, clientY) {
+    const action = arrowActionRef.current;
+    if (!action) return;
+    const dxPercent = (clientX - action.startX) / action.canvasRect.width * 100;
+    const dyPercent = (clientY - action.startY) / action.canvasRect.height * 100;
+
+    if (action.action === 'move') {
+      const minX = Math.min(action.arrow.x1, action.arrow.x2);
+      const maxX = Math.max(action.arrow.x1, action.arrow.x2);
+      const minY = Math.min(action.arrow.y1, action.arrow.y2);
+      const maxY = Math.max(action.arrow.y1, action.arrow.y2);
+      const boundedDx = clamp(dxPercent, -minX, 100 - maxX);
+      const boundedDy = clamp(dyPercent, -minY, 100 - maxY);
+      applyArrowActionPatch(action.arrowId, {
+        x1: action.arrow.x1 + boundedDx,
+        y1: action.arrow.y1 + boundedDy,
+        x2: action.arrow.x2 + boundedDx,
+        y2: action.arrow.y2 + boundedDy
+      });
+      return;
+    }
+
+    const nextX2 = normalizeCanvasPercent(action.arrow.x2 + dxPercent, action.arrow.x2);
+    const nextY2 = normalizeCanvasPercent(action.arrow.y2 + dyPercent, action.arrow.y2);
+    const nextArrow = normalizeGraphArrow({
+      ...action.arrow,
+      x2: nextX2,
+      y2: nextY2
+    });
+    if (getGraphArrowLength(nextArrow) < MIN_GRAPH_ARROW_LENGTH) return;
+    applyArrowActionPatch(action.arrowId, {
+      x2: nextArrow.x2,
+      y2: nextArrow.y2
+    });
+  }
+
+  function applyArrowActionPatch(arrowId, patch) {
+    flushSync(() => {
+      if (onArrowChangeRef.current) onArrowChangeRef.current(arrowId, patch);
+    });
+  }
+
+  function endArrowAction(event) {
+    const action = arrowActionRef.current;
+    if (!action || action.arrowId !== event.currentTarget.dataset.arrowId) return;
+    arrowActionRef.current = null;
+    if (event.currentTarget.releasePointerCapture && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may already be released.
+      }
+    }
+  }
+
   function startLabelAction(event, label, action) {
     event.preventDefault();
     event.stopPropagation();
+    if (editingLabelId === label.id && (action === 'move' || action === 'resize')) return;
+    onActivate();
     selectLabel(label.id);
     const canvasRect = event.currentTarget.closest('.graph-canvas').getBoundingClientRect();
     const frameElement = event.currentTarget.closest('.graph-label-frame');
@@ -2829,29 +3558,38 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
 
   return (
     <div
-      className={`graph-canvas mode-${graph.mode}${dividerDragInput === 'touch' ? ' is-divider-touching' : ''}`}
+      className={`graph-canvas is-${graph.type} mode-${graph.mode}${dividerDragInput === 'touch' ? ' is-divider-touching' : ''}`}
       ref={setGraphCanvasRef}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
       onPointerLeave={() => {
-        if (!activeDividerDragRef.current) setHoverPoint(null);
+        if (!activeDividerDragRef.current && !activeArrowDragRef.current) setHoverPoint(null);
       }}
       role="button"
       aria-label="그래프 그리기 영역"
     >
-      {graph.type === 'bar' ? (
-        <BarGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegment && previewSegment.key} />
-      ) : (
-        <PieGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegment && previewSegment.key} />
-      )}
+      <SingleGraphDisplay graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegment && previewSegment.key} />
+      <GraphArrowLayer
+        arrows={graph.arrows}
+        previewArrow={previewArrow}
+        interactive
+        selectedArrowId={selectedArrowId}
+        onArrowActionStart={startArrowAction}
+        onArrowActionEnd={endArrowAction}
+        onArrowRemove={(arrowId) => {
+          if (selectedArrowId === arrowId) releaseArrowSelection();
+          if (onArrowRemove) onArrowRemove(arrowId);
+        }}
+      />
 
       {readoutText && <div className="graph-readout" style={readoutStyle}>{readoutText}</div>}
 
       {graph.labels.map((rawLabel) => {
         const label = normalizeGraphLabel(rawLabel);
         const isSelected = selectedLabelId === label.id;
+        const isEditing = editingLabelId === label.id;
         const inputElement = labelInputRefs.current.get(label.id);
         const maxLabelWidth = getCanvasLabelMaxWidth(canvasSize);
         const labelWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, inputElement, maxLabelWidth);
@@ -2861,18 +3599,19 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
         return (
           <div
             key={label.id}
-            className={`graph-label-frame ${isSelected ? 'is-selected' : ''}`}
+            className={`graph-label-frame ${isSelected ? 'is-selected' : ''}${isEditing ? ' is-editing' : ''}`}
+            data-label-id={label.id}
             style={{
               left: `clamp(${labelWidth / 2}px, ${label.x}%, calc(100% - ${labelWidth / 2}px))`,
               top: `clamp(${labelHeight / 2}px, ${label.y}%, calc(100% - ${labelHeight / 2}px))`,
+              minWidth: `${labelWidth}px`,
               width: `${labelWidth}px`,
               height: `${labelHeight}px`,
               '--label-selection-inset': `${getLabelSelectionInset(label.fontSize)}px`
             }}
-            onPointerDown={(event) => {
-              event.stopPropagation();
-              selectLabel(label.id);
-            }}
+            onPointerDown={(event) => startLabelAction(event, displayLabel, 'move')}
+            onPointerUp={endLabelAction}
+            onPointerCancel={endLabelAction}
           >
             <textarea
               ref={(node) => {
@@ -2882,11 +3621,13 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
                   labelInputRefs.current.delete(label.id);
                 }
               }}
-              className="graph-floating-label"
+              className={`graph-floating-label ${isEditing ? 'is-editing' : ''}`}
               value={label.text}
               rows={labelRows}
               wrap="soft"
               spellCheck="false"
+              readOnly={!isEditing}
+              tabIndex={isEditing ? 0 : -1}
               style={{
                 color: label.color,
                 fontSize: `${label.fontSize}px`,
@@ -2897,7 +3638,6 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
               }}
               onPointerDown={(event) => {
                 event.stopPropagation();
-                selectLabel(label.id);
               }}
               onChange={(event) => {
                 const nextText = event.target.value;
@@ -2916,7 +3656,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
                   style={{ inset: `-${getLabelSelectionInset(label.fontSize)}px` }}
                   aria-hidden="true"
                 />
-                {LABEL_BORDER_MOVE_AREAS.map((area) => (
+                {!isEditing && LABEL_BORDER_MOVE_AREAS.map((area) => (
                   <span
                     key={area}
                     className={`label-border-move-hit ${area}`}
@@ -2937,29 +3677,47 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
                       style={{ backgroundColor: color }}
                       title={color === '#ffffff' ? '흰색' : '검은색'}
                       aria-label={color === '#ffffff' ? '흰색' : '검은색'}
-                      onPointerDown={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
                       onClick={() => onLabelChange(label.id, { color })}
                     />
                   ))}
                 </div>
                 <button
-                  className="label-handle resize"
+                  className={`label-handle edit ${isEditing ? 'is-active' : ''}`}
                   type="button"
-                  title="크기 변경"
-                  aria-label="텍스트 크기 변경"
+                  title="편집"
+                  aria-label="텍스트 편집"
                   data-label-id={label.id}
-                  onPointerDown={(event) => startLabelAction(event, displayLabel, 'resize')}
-                  onPointerUp={endLabelAction}
-                  onPointerCancel={endLabelAction}
+                  onPointerDown={(event) => beginLabelEditing(event, label.id)}
                 >
-                  <Maximize2 size={12} aria-hidden="true" />
+                  <PenLine size={12} aria-hidden="true" />
                 </button>
+                {!isEditing && (
+                  <button
+                    className="label-handle resize"
+                    type="button"
+                    title="크기 변경"
+                    aria-label="텍스트 크기 변경"
+                    data-label-id={label.id}
+                    onPointerDown={(event) => startLabelAction(event, displayLabel, 'resize')}
+                    onPointerUp={endLabelAction}
+                    onPointerCancel={endLabelAction}
+                  >
+                    <Maximize2 size={12} aria-hidden="true" />
+                  </button>
+                )}
                 <button
                   className="label-handle delete"
                   type="button"
                   title="글자 지우기"
                   aria-label="텍스트 지우기"
-                  onPointerDown={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
                     onLabelRemove(label.id);
@@ -2975,6 +3733,217 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onP
     </div>
   );
 });
+
+function GraphArrowLayer({
+  arrows,
+  previewArrow = null,
+  visualScale = 1,
+  pointProjector = null,
+  interactive = false,
+  selectedArrowId = null,
+  onArrowActionStart,
+  onArrowActionEnd,
+  onArrowRemove
+}) {
+  const [layerRef, layerSize] = useElementSize();
+  const savedArrows = sanitizeGraphArrows(arrows);
+  const preview = previewArrow && getGraphArrowLength(previewArrow) >= 0.3
+    ? { ...normalizeGraphArrow(previewArrow), id: 'preview-arrow', isPreview: true }
+    : null;
+  const visibleArrows = preview ? savedArrows.concat(preview) : savedArrows;
+
+  return (
+    <div className="graph-arrow-layer" ref={layerRef} aria-hidden={interactive ? undefined : true}>
+      {layerSize.width > 0 && layerSize.height > 0 && visibleArrows.map((arrow) => {
+        const displayArrow = typeof pointProjector === 'function'
+          ? projectGraphArrowForDisplay(arrow, pointProjector)
+          : arrow;
+        return (
+          <GraphArrowItem
+            key={arrow.id || `${arrow.x1}-${arrow.y1}-${arrow.x2}-${arrow.y2}`}
+            arrow={displayArrow}
+            layerSize={layerSize}
+            preview={arrow.isPreview}
+            visualScale={visualScale}
+            interactive={interactive && !arrow.isPreview}
+            selected={selectedArrowId === arrow.id}
+            onArrowActionStart={onArrowActionStart}
+            onArrowActionEnd={onArrowActionEnd}
+            onArrowRemove={onArrowRemove}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function projectGraphArrowForDisplay(arrow, pointProjector) {
+  const start = pointProjector(arrow.x1, arrow.y1);
+  const end = pointProjector(arrow.x2, arrow.y2);
+  return {
+    ...arrow,
+    x1: normalizeCanvasPercent(start && start.x, arrow.x1),
+    y1: normalizeCanvasPercent(start && start.y, arrow.y1),
+    x2: normalizeCanvasPercent(end && end.x, arrow.x2),
+    y2: normalizeCanvasPercent(end && end.y, arrow.y2)
+  };
+}
+
+function GraphArrowItem({
+  arrow,
+  layerSize,
+  preview,
+  visualScale,
+  interactive,
+  selected,
+  onArrowActionStart,
+  onArrowActionEnd,
+  onArrowRemove
+}) {
+  const x1 = layerSize.width * (arrow.x1 / 100);
+  const y1 = layerSize.height * (arrow.y1 / 100);
+  const x2 = layerSize.width * (arrow.x2 / 100);
+  const y2 = layerSize.height * (arrow.y2 / 100);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return null;
+
+  const angle = Math.atan2(dy, dx);
+  const arrowScale = Number.isFinite(Number(visualScale)) && Number(visualScale) > 0 ? Number(visualScale) : 1;
+  const arrowHeight = roundLabelMetric(24 * arrowScale);
+  const arrowCenter = arrowHeight / 2;
+  const outlineHeadLength = clamp(length * 0.34, 12 * arrowScale, 22 * arrowScale);
+  const fillHeadLength = Math.max(8 * arrowScale, outlineHeadLength - 4 * arrowScale);
+  const outlineBase = Math.max(0, length - outlineHeadLength);
+  const fillBase = Math.max(0, length - fillHeadLength);
+  const outlineShaftEnd = Math.max(0, length - outlineHeadLength * 0.58);
+  const fillShaftEnd = Math.max(0, length - fillHeadLength * 0.58);
+  const outlineHeadHalfHeight = 9 * arrowScale;
+  const fillHeadHalfHeight = 5.5 * arrowScale;
+  const handleSize = 24;
+  const handleOffset = handleSize / 2;
+  const counterRotation = `rotate(${-angle}rad)`;
+
+  return (
+    <span
+      className={`graph-arrow-item ${preview ? 'is-preview' : ''}${interactive ? ' is-interactive' : ''}${selected ? ' is-selected' : ''}`}
+      data-arrow-id={arrow.id}
+      style={{
+        left: `${x1}px`,
+        top: `${y1}px`,
+        width: `${length}px`,
+        transform: `rotate(${angle}rad)`
+      }}
+    >
+      <svg
+        className="graph-arrow-svg"
+        viewBox={`0 0 ${Math.max(1, length)} ${arrowHeight}`}
+        width={length}
+        height={arrowHeight}
+        style={{ transform: `translateY(-${arrowCenter}px)` }}
+        focusable="false"
+      >
+        <line
+          x1="0"
+          y1={arrowCenter}
+          x2={outlineShaftEnd}
+          y2={arrowCenter}
+          stroke={GRAPH_ARROW_OUTLINE_COLOR}
+          strokeWidth={7 * arrowScale}
+          strokeLinecap="round"
+        />
+        <polygon
+          points={`${outlineBase},${arrowCenter - outlineHeadHalfHeight} ${length},${arrowCenter} ${outlineBase},${arrowCenter + outlineHeadHalfHeight}`}
+          fill={GRAPH_ARROW_OUTLINE_COLOR}
+          stroke={GRAPH_ARROW_OUTLINE_COLOR}
+          strokeLinejoin="round"
+        />
+        <line
+          x1="0"
+          y1={arrowCenter}
+          x2={fillShaftEnd}
+          y2={arrowCenter}
+          stroke={GRAPH_LINE_COLOR}
+          strokeWidth={3.2 * arrowScale}
+          strokeLinecap="round"
+        />
+        <polygon
+          points={`${fillBase},${arrowCenter - fillHeadHalfHeight} ${length},${arrowCenter} ${fillBase},${arrowCenter + fillHeadHalfHeight}`}
+          fill={GRAPH_LINE_COLOR}
+          stroke={GRAPH_LINE_COLOR}
+          strokeLinejoin="round"
+        />
+      </svg>
+      {interactive && (
+        <span
+          className="graph-arrow-move-hit"
+          data-arrow-id={arrow.id}
+          title="이동"
+          aria-hidden="true"
+          style={{
+            width: `${length}px`,
+            height: `${Math.max(24, arrowHeight)}px`,
+            top: `-${Math.max(24, arrowHeight) / 2}px`
+          }}
+          onPointerDown={(event) => onArrowActionStart && onArrowActionStart(event, arrow, 'move')}
+          onPointerUp={onArrowActionEnd}
+          onPointerCancel={onArrowActionEnd}
+        />
+      )}
+      {interactive && selected && (
+        <>
+          <button
+            className="graph-arrow-handle resize"
+            type="button"
+            title="크기 변경"
+            aria-label="화살표 크기 변경"
+            data-arrow-id={arrow.id}
+            style={{
+              left: `${length - handleOffset}px`,
+              top: `-${handleOffset}px`,
+              transform: counterRotation
+            }}
+            onPointerDown={(event) => onArrowActionStart && onArrowActionStart(event, arrow, 'resize')}
+            onPointerUp={onArrowActionEnd}
+            onPointerCancel={onArrowActionEnd}
+          >
+            <Maximize2 size={12} aria-hidden="true" />
+          </button>
+          <button
+            className="graph-arrow-handle delete"
+            type="button"
+            title="화살표 지우기"
+            aria-label="화살표 지우기"
+            style={{
+              left: `${length - handleOffset}px`,
+              top: `-${handleSize + handleOffset + 4}px`,
+              transform: counterRotation
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (onArrowRemove) onArrowRemove(arrow.id);
+            }}
+          >
+            <Trash2 size={12} aria-hidden="true" />
+          </button>
+        </>
+      )}
+    </span>
+  );
+}
+
+function SingleGraphDisplay({ graph, segments, previewDivider = null, previewSegmentKey = null }) {
+  return graph.type === 'pie' ? (
+    <PieGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegmentKey} />
+  ) : (
+    <BarGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegmentKey} />
+  );
+}
 
 function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
   const scale = normalizeGraphScale(graph.scale);
@@ -3098,12 +4067,23 @@ function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
   );
 }
 
-function ShareDialog({ state, onClose, onImport }) {
+function ShareDialog({ state, activeTab, interpretationAnswers, onClose, onImport }) {
   const [qrSrc, setQrSrc] = useState('');
   const [activeQrIndex, setActiveQrIndex] = useState(0);
   const [message, setMessage] = useState('');
-  const sharePayload = useMemo(() => makeSharePayload(state), [state]);
+  const [graphShareType, setGraphShareType] = useState(() => getActiveGraphType(state && state.graph));
+  const shareScope = getShareScopeForTab(activeTab);
+  const sharePayload = useMemo(
+    () => makeSharePayload({
+      state,
+      scope: shareScope,
+      interpretationAnswers,
+      graphType: graphShareType
+    }),
+    [graphShareType, interpretationAnswers, shareScope, state]
+  );
   const activeQrItem = sharePayload.items[Math.min(activeQrIndex, sharePayload.items.length - 1)] || sharePayload.items[0];
+  const shareLabel = getSharePayloadLabel(sharePayload);
 
   useEffect(() => {
     setActiveQrIndex(0);
@@ -3125,11 +4105,11 @@ function ShareDialog({ state, onClose, onImport }) {
 
   function handleScannedText(text) {
     const result = parseImportTextResult(text);
-    if (!result.state) {
+    if (!result.payload) {
       setMessage(result.message || '읽은 QR을 적용할 수 없습니다.');
       return;
     }
-    onImport(result.state);
+    onImport(result.payload);
     onClose();
   }
 
@@ -3145,7 +4125,18 @@ function ShareDialog({ state, onClose, onImport }) {
 
         <div className="share-grid">
           <div className="qr-card">
-            {qrSrc ? <img src={qrSrc} alt="현재 자료 QR 코드" /> : <div className="qr-placeholder" />}
+            {sharePayload.scope === 'graph' && (
+              <SegmentedControl
+                className="qr-graph-type-control"
+                value={graphShareType}
+                onChange={setGraphShareType}
+                items={[
+                  { value: 'bar', label: '띠그래프', icon: RectangleHorizontal },
+                  { value: 'pie', label: '원그래프', icon: Circle }
+                ]}
+              />
+            )}
+            {qrSrc ? <img src={qrSrc} alt={`${shareLabel} QR 코드`} /> : <div className="qr-placeholder" />}
             {sharePayload.items.length > 1 && (
               <div className="qr-pager" aria-label="QR 순서">
                 <button
@@ -3314,9 +4305,9 @@ function SectionTitle({ icon: Icon, title }) {
   return null;
 }
 
-function SegmentedControl({ value, onChange, items }) {
+function SegmentedControl({ value, onChange, items, className = '' }) {
   return (
-    <div className="segmented-control">
+    <div className={`segmented-control ${className}`.trim()}>
       {items.map((item) => {
         const Icon = item.icon;
         return (
@@ -3364,7 +4355,7 @@ function makePercentLabelTicks(scale, graphType) {
 }
 
 function getGraphPointValue(graph, point) {
-  return graph.type === 'bar' ? point.graphX : point.percentAngle;
+  return graph.type === 'pie' ? point.percentAngle : point.graphX;
 }
 
 function getSnappedDividerValue(graph, point) {
@@ -3433,20 +4424,41 @@ async function makeQrImage(text) {
   }
 }
 
-function makeSharePayload(state) {
+function makeSharePayload({ state, scope, interpretationAnswers, graphType }) {
   const base = getShareBaseUrl();
-  const packed = packShareState(state);
+  const shareScope = getShareScopeForTab(scope);
+  const shareGraphType = shareScope === 'graph'
+    ? normalizeGraphType(graphType, getActiveGraphType(state && state.graph))
+    : null;
+  const packed = packScopedShareState(state, shareScope, interpretationAnswers, shareGraphType);
   const candidates = makeShareCandidates(base, packed);
   const single = chooseBestQrCandidate(candidates);
+  const label = getSharePayloadLabel({ scope: shareScope, graphType: shareGraphType });
   if (single) {
     return {
       cacheKey: single.url,
       copyText: single.url,
       items: [{ url: single.url }],
-      mode: 'single'
+      mode: 'single',
+      scope: shareScope,
+      graphType: shareGraphType,
+      label
     };
   }
-  return chooseBestChunkPayload(base, candidates);
+  return {
+    ...chooseBestChunkPayload(base, candidates),
+    scope: shareScope,
+    graphType: shareGraphType,
+    label
+  };
+}
+
+function getShareScopeForTab(tab) {
+  if (tab === 'table') return 'table';
+  if (tab === 'graph') return 'graph';
+  if (tab === 'interpret') return 'interpret';
+  if (tab === 'full') return 'full';
+  return 'plan';
 }
 
 function getShareBaseUrl() {
@@ -3575,43 +4587,87 @@ function makeShareBatchId(text) {
   return (hash >>> 0).toString(36).toUpperCase();
 }
 
-function packShareState(state) {
-  const packed = { v: SHARE_VERSION };
+function packScopedShareState(state, scope, interpretationAnswers, graphType) {
+  const shareScope = getShareScopeForTab(scope);
+  const packed = {
+    v: SHARE_VERSION,
+    q: SHARE_SCOPE_CODES[shareScope] || SHARE_SCOPE_CODES.plan
+  };
   const plan = state && state.plan ? state.plan : {};
   const table = state && state.table ? state.table : {};
-  const graph = state && state.graph ? state.graph : {};
-  const itemCount = getPlanItemCount(plan.items, table.headerRow);
-  const tableWidth = getTableWidthForItemCount(itemCount);
 
-  const planPayload = {};
-  const title = typeof plan.title === 'string' ? plan.title : '';
-  const itemPayload = packRowForShare(plan.items, itemCount);
-  if (title) planPayload.t = title;
-  if (itemPayload) planPayload.i = itemPayload;
-  if (itemCount !== DEFAULT_PLAN_ITEM_COUNT) planPayload.c = itemCount;
-  if (hasObjectKeys(planPayload)) packed.p = planPayload;
-
-  const tablePayload = {};
-  const headerPayload = packRowForShare(buildHeaderRow(plan.items, table.headerRow, tableWidth), tableWidth);
-  const rowPayload = packRowsForShare(table.rows, tableWidth);
-  if (headerPayload) tablePayload.h = headerPayload;
-  if (rowPayload) {
-    if (rowPayload.length === 1) {
-      tablePayload.r = rowPayload[0];
-    } else {
-      tablePayload.rs = rowPayload;
-    }
+  if (shareScope === 'plan' || shareScope === 'full') {
+    const planPayload = packPlanForShare(plan, table);
+    if (hasObjectKeys(planPayload)) packed.p = planPayload;
   }
-  if (hasObjectKeys(tablePayload)) packed.t = tablePayload;
-
-  const graphPayload = packGraphForShare(graph);
-  if (graphPayload) packed.g = graphPayload;
+  if (shareScope === 'table' || shareScope === 'full') {
+    const tablePayload = packTableForShare(plan, table);
+    if (hasObjectKeys(tablePayload)) packed.t = tablePayload;
+  }
+  if (shareScope === 'graph' || shareScope === 'full') {
+    const graphPayload = packGraphForShare(
+      state && state.graph ? state.graph : {},
+      shareScope === 'graph' ? graphType : null
+    );
+    if (graphPayload) packed.g = graphPayload;
+  }
+  if (shareScope === 'interpret' || shareScope === 'full') {
+    const interpretationPayload = packInterpretationForShare(interpretationAnswers);
+    if (hasObjectKeys(interpretationPayload)) packed.i = interpretationPayload;
+  }
 
   return packed;
 }
 
+function packShareState(state) {
+  const packed = { v: LEGACY_SHARE_VERSION };
+  const planPayload = packPlanForShare(state && state.plan ? state.plan : {}, state && state.table ? state.table : {});
+  const tablePayload = packTableForShare(state && state.plan ? state.plan : {}, state && state.table ? state.table : {});
+  const graphPayload = packGraphForShare(state && state.graph ? state.graph : {});
+  if (hasObjectKeys(planPayload)) packed.p = planPayload;
+  if (hasObjectKeys(tablePayload)) packed.t = tablePayload;
+  if (graphPayload) packed.g = graphPayload;
+  return packed;
+}
+
+function packPlanForShare(plan, table) {
+  const payload = {};
+  const itemCount = getPlanItemCount(plan && plan.items, table && table.headerRow);
+  const title = typeof (plan && plan.title) === 'string' ? plan.title : '';
+  const itemPayload = packRowForShare(plan && plan.items, itemCount);
+  if (title) payload.t = title;
+  if (itemPayload) payload.i = itemPayload;
+  if (itemCount !== DEFAULT_PLAN_ITEM_COUNT) payload.c = itemCount;
+  return payload;
+}
+
+function packTableForShare(plan, table) {
+  const payload = {};
+  const itemCount = getPlanItemCount(plan && plan.items, table && table.headerRow);
+  const tableWidth = getTableWidthForItemCount(itemCount);
+  const rowPayload = packRowsForShare(table && table.rows, tableWidth);
+  if (itemCount !== DEFAULT_PLAN_ITEM_COUNT) payload.c = itemCount;
+  if (rowPayload) {
+    if (rowPayload.length === 1) {
+      payload.r = rowPayload[0];
+    } else {
+      payload.rs = rowPayload;
+    }
+  }
+  return payload;
+}
+
+function packInterpretationForShare(answers) {
+  const payload = {};
+  const normalized = normalizeInterpretationAnswers(answers);
+  Object.entries(normalized).forEach(([key, value]) => {
+    if (value) payload[key] = value;
+  });
+  return payload;
+}
+
 function isDefaultShareState(packed) {
-  return packed && Object.keys(packed).length === 1 && packed.v === SHARE_VERSION;
+  return packed && Object.keys(packed).length === 1 && packed.v === LEGACY_SHARE_VERSION;
 }
 
 function packRowForShare(row, width) {
@@ -3627,24 +4683,49 @@ function packRowsForShare(rows, width) {
   return packedRows.length ? packedRows : null;
 }
 
-function packGraphForShare(graph) {
+function packGraphForShare(graph, graphType = null) {
   const packed = {};
-  const type = graph.type === 'pie' ? 'pie' : 'bar';
-  const scale = normalizeGraphScale(graph.scale);
+  const graphState = normalizeGraphState(graph);
+  const scale = normalizeGraphScale(graphState.scale);
+  const mode = GRAPH_MODE_CODES[normalizeStoredGraphMode(graphState.mode)] || GRAPH_MODE_CODES.divide;
+  const activeColor = normalizeGraphActiveColor(graphState.activeColor);
+  const scopedGraphType = normalizeOptionalGraphType(graphType);
+
+  if (scopedGraphType) {
+    const drawingPayload = packGraphDrawingForShare(getGraphDrawing(graphState, scopedGraphType));
+    if (drawingPayload) Object.assign(packed, drawingPayload);
+    packed.y = SHARE_GRAPH_TYPE_CODES[scopedGraphType];
+    if (scale !== DEFAULT_GRAPH_SCALE) packed.s = scale;
+    if (mode !== GRAPH_MODE_CODES.divide) packed.m = mode;
+    if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLOR_SHARE_PALETTE);
+    return packed;
+  }
+
+  const activeType = normalizeGraphType(graphState.activeType, 'bar');
+  const barPayload = packGraphDrawingForShare(graphState.bar);
+  const piePayload = packGraphDrawingForShare(graphState.pie);
+
+  if (scale !== DEFAULT_GRAPH_SCALE) packed.s = scale;
+  if (mode !== GRAPH_MODE_CODES.divide) packed.m = mode;
+  if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLOR_SHARE_PALETTE);
+  if (activeType !== 'bar') packed.x = 'p';
+  if (barPayload) packed.b = barPayload;
+  if (piePayload) packed.p = piePayload;
+
+  return hasObjectKeys(packed) ? packed : null;
+}
+
+function packGraphDrawingForShare(drawing) {
+  const graph = normalizeGraphDrawing(drawing, drawing && drawing.type === 'pie' ? 'pie' : 'bar');
+  const packed = {};
   const dividers = sanitizeDividers(Array.isArray(graph.dividers) ? graph.dividers : []);
   const fillPayload = packFillsForShare(graph.fills, dividers);
   const labelPayload = packLabelsForShare(graph.labels);
-  const mode = GRAPH_MODE_CODES[normalizeStoredGraphMode(graph.mode)] || GRAPH_MODE_CODES.divide;
-  const activeColor = normalizeGraphActiveColor(graph.activeColor);
-
-  if (type === 'pie') packed.t = 'p';
-  if (scale !== DEFAULT_GRAPH_SCALE) packed.s = scale;
+  const arrowPayload = packArrowsForShare(graph.arrows);
   if (dividers.length) packed.d = encodeDividersForShare(dividers);
   if (fillPayload) packed.f = fillPayload;
   if (labelPayload) packed.l = labelPayload;
-  if (mode !== GRAPH_MODE_CODES.divide) packed.m = mode;
-  if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLOR_SHARE_PALETTE);
-
+  if (arrowPayload) packed.r = arrowPayload;
   return hasObjectKeys(packed) ? packed : null;
 }
 
@@ -3689,8 +4770,36 @@ function packLabelsForShare(labels) {
   });
 }
 
-function unpackShareState(packed) {
-  if (!packed || packed.v !== SHARE_VERSION) return null;
+function packArrowsForShare(arrows) {
+  const safeArrows = sanitizeGraphArrows(arrows);
+  if (!safeArrows.length) return null;
+  return safeArrows.map((arrow) => [
+    quantizePercent(arrow.x1),
+    quantizePercent(arrow.y1),
+    quantizePercent(arrow.x2),
+    quantizePercent(arrow.y2)
+  ]);
+}
+
+function unpackSharePayload(packed) {
+  if (!packed || (packed.v !== SHARE_VERSION && packed.v !== LEGACY_SHARE_VERSION)) return null;
+  if (packed.v === LEGACY_SHARE_VERSION) {
+    return { scope: 'full', state: unpackLegacyShareState(packed) };
+  }
+
+  const scope = SHARE_SCOPES_BY_CODE[packed.q] || 'plan';
+  if (scope === 'plan') return { scope, plan: unpackPlanForShare(packed.p) };
+  if (scope === 'table') return { scope, table: unpackTableForShare(packed.t) };
+  if (scope === 'graph') return { scope, ...unpackGraphScopeForShare(packed.g) };
+  if (scope === 'interpret') return { scope, interpretation: unpackInterpretationForShare(packed.i) };
+  return {
+    scope: 'full',
+    state: unpackLegacyShareState(packed),
+    interpretation: unpackInterpretationForShare(packed.i)
+  };
+}
+
+function unpackLegacyShareState(packed) {
   const tablePayload = asPlainObject(packed.t);
   const planPayload = asPlainObject(packed.p);
   const itemCount = normalizePlanItemCount(planPayload.c, getPlanItemCount(planPayload.i, tablePayload.h));
@@ -3708,6 +4817,54 @@ function unpackShareState(packed) {
     },
     graph: unpackGraphForShare(packed.g)
   });
+}
+
+function unpackShareState(packed) {
+  const payload = unpackSharePayload(packed);
+  if (!payload) return null;
+  if (payload.scope === 'full') return normalizeLoadedState(payload.state);
+  if (payload.scope === 'interpret') return createDefaultState();
+  return applyScopedStateImport(createDefaultState(), payload);
+}
+
+function unpackPlanForShare(encoded) {
+  const planPayload = asPlainObject(encoded);
+  const itemCount = normalizePlanItemCount(planPayload.c, getPlanItemCount(planPayload.i, null));
+  return {
+    title: typeof planPayload.t === 'string' ? planPayload.t : '',
+    items: unpackRowForShare(planPayload.i, itemCount)
+  };
+}
+
+function unpackTableForShare(encoded) {
+  const tablePayload = asPlainObject(encoded);
+  const itemCount = normalizePlanItemCount(tablePayload.c, DEFAULT_PLAN_ITEM_COUNT);
+  const tableWidth = getTableWidthForItemCount(itemCount);
+  return {
+    headerRow: fitHeaderRow([], tableWidth),
+    rows: unpackRowsForShare(tablePayload, tableWidth),
+    tableDefaultsCleared: true
+  };
+}
+
+function unpackInterpretationForShare(encoded) {
+  return normalizeInterpretationAnswers(asPlainObject(encoded));
+}
+
+function unpackGraphScopeForShare(encoded) {
+  const graph = asPlainObject(encoded);
+  const graphType = decodeGraphTypeForShare(graph.y);
+  if (!graphType) return { graph: unpackGraphForShare(encoded) };
+  return {
+    graphType,
+    graph: {
+      scale: normalizeGraphScale(graph.s),
+      mode: GRAPH_MODES_BY_CODE[graph.m] || 'divide',
+      activeColor: decodeColorForShare(graph.a, GRAPH_COLOR_SHARE_PALETTE, GRAPH_COLORS[0]),
+      activeType: graphType,
+      [graphType]: unpackGraphDrawingForShare(graph, graphType)
+    }
+  };
 }
 
 function unpackRowForShare(encoded, width) {
@@ -3738,16 +4895,29 @@ function unpackRowsForShare(tablePayload, width) {
 
 function unpackGraphForShare(encoded) {
   const graph = asPlainObject(encoded);
-  const dividers = decodeDividersForShare(graph.d);
+  const hasSplitGraph = graph.b || graph.p;
   const scale = normalizeGraphScale(graph.s);
+  const legacyType = graph.t === 'p' ? 'pie' : 'bar';
   return {
-    type: graph.t === 'p' ? 'pie' : 'bar',
     scale,
     mode: GRAPH_MODES_BY_CODE[graph.m] || 'divide',
     activeColor: decodeColorForShare(graph.a, GRAPH_COLOR_SHARE_PALETTE, GRAPH_COLORS[0]),
+    activeType: graph.x === 'p' ? 'pie' : 'bar',
+    bar: unpackGraphDrawingForShare(hasSplitGraph ? graph.b : (legacyType === 'bar' ? graph : null), 'bar'),
+    pie: unpackGraphDrawingForShare(hasSplitGraph ? graph.p : (legacyType === 'pie' ? graph : null), 'pie')
+  };
+}
+
+function unpackGraphDrawingForShare(encoded, type) {
+  const graph = asPlainObject(encoded);
+  const dividers = decodeDividersForShare(graph.d);
+  return {
+    type,
     dividers,
     fills: decodeFillsForShare(graph.f, dividers),
-    labels: decodeLabelsForShare(graph.l)
+    labels: decodeLabelsForShare(graph.l),
+    arrows: decodeArrowsForShare(graph.r),
+    undoStack: []
   };
 }
 
@@ -3800,6 +4970,19 @@ function decodeLabelsForShare(encoded) {
       color: decodeColorForShare(label[5], LABEL_COLORS, LABEL_COLORS[0]),
       manualSize: label[6] === 1
     }));
+}
+
+function decodeArrowsForShare(encoded) {
+  if (!Array.isArray(encoded)) return [];
+  return sanitizeGraphArrows(encoded
+    .filter((arrow) => Array.isArray(arrow))
+    .map((arrow) => ({
+      id: makeId('arrow'),
+      x1: decodeQuantizedPercent(arrow[0]),
+      y1: decodeQuantizedPercent(arrow[1]),
+      x2: decodeQuantizedPercent(arrow[2]),
+      y2: decodeQuantizedPercent(arrow[3])
+    })));
 }
 
 function encodeColorForShare(color, palette) {
@@ -3874,20 +5057,35 @@ function asPlainObject(value) {
 }
 
 function readStateFromHash() {
-  return parseImportTextResult(window.location.hash || '').state;
+  const payload = readImportPayloadFromHash();
+  if (!payload || payload.scope === 'interpret') return null;
+  return applyScopedStateImport(createDefaultState(), payload);
+}
+
+function readInterpretationFromHash() {
+  const payload = readImportPayloadFromHash();
+  if (!payload) return null;
+  if (payload.scope === 'interpret') return normalizeInterpretationAnswers(payload.interpretation);
+  if (payload.scope === 'full' && payload.interpretation) return normalizeInterpretationAnswers(payload.interpretation);
+  return null;
+}
+
+function readImportPayloadFromHash() {
+  return parseImportTextResult(window.location.hash || '').payload;
 }
 
 function parseImportText(text) {
-  return parseImportTextResult(text).state;
+  const payload = parseImportTextResult(text).payload;
+  if (!payload || payload.scope === 'interpret') return null;
+  return applyScopedStateImport(createDefaultState(), payload);
 }
 
 function parseImportTextResult(text) {
-  if (!text || !text.trim()) return { state: null };
-  const payload = extractSharePayload(text);
-  if (!payload) return { state: null };
-  if (payload.kind === 'p') return parseShareChunk(payload.value);
-  const state = decodeShareToken(payload.kind, payload.value);
-  return { state };
+  if (!text || !text.trim()) return { payload: null };
+  const extracted = extractSharePayload(text);
+  if (!extracted) return { payload: null };
+  if (extracted.kind === 'p') return parseShareChunk(extracted.value);
+  return { payload: decodeShareToken(extracted.kind, extracted.value) };
 }
 
 function extractSharePayload(text) {
@@ -3918,7 +5116,7 @@ function decodeShareToken(kind, token) {
   const clean = (token || '').trim().replace(/^#/, '');
   try {
     if (kind === 'g') {
-      if (clean === SHARE_DEFAULT_TOKEN) return unpackShareState({ v: SHARE_VERSION });
+      if (clean === SHARE_DEFAULT_TOKEN) return unpackSharePayload({ v: LEGACY_SHARE_VERSION });
       return parseShareJson(decompressFromEncodedURIComponent(clean));
     }
     if (kind === 'u') {
@@ -3928,7 +5126,10 @@ function decodeShareToken(kind, token) {
     const json = decompressFromEncodedURIComponent(clean);
     if (!json) return null;
     const parsed = JSON.parse(json);
-    return normalizeLoadedState(parsed.state || parsed);
+    if (parsed && (parsed.v === SHARE_VERSION || parsed.v === LEGACY_SHARE_VERSION)) {
+      return unpackSharePayload(parsed);
+    }
+    return { scope: 'full', state: normalizeLoadedState(parsed.state || parsed) };
   } catch (error) {
     return null;
   }
@@ -3937,20 +5138,22 @@ function decodeShareToken(kind, token) {
 function parseShareJson(json) {
   if (!json) return null;
   const parsed = JSON.parse(json);
-  if (parsed && parsed.v === SHARE_VERSION) return unpackShareState(parsed);
-  return normalizeLoadedState(parsed.state || parsed);
+  if (parsed && (parsed.v === SHARE_VERSION || parsed.v === LEGACY_SHARE_VERSION)) {
+    return unpackSharePayload(parsed);
+  }
+  return { scope: 'full', state: normalizeLoadedState(parsed.state || parsed) };
 }
 
 function parseShareChunk(value) {
   const parts = value.split('.');
-  if (parts.length < 5) return { state: null, message: '가져올 수 없는 QR 내용입니다.' };
+  if (parts.length < 5) return { payload: null, message: '가져올 수 없는 QR 내용입니다.' };
   const [kindCode, batchId, indexCode, totalCode, ...chunkParts] = parts;
   const kind = kindCode.toLowerCase();
   const index = Number.parseInt(indexCode, 36);
   const total = Number.parseInt(totalCode, 36);
   const chunk = chunkParts.join('.');
   if (!['g', 'u'].includes(kind) || !batchId || !Number.isInteger(index) || !Number.isInteger(total) || index < 0 || index >= total || total < 1) {
-    return { state: null, message: '가져올 수 없는 QR 내용입니다.' };
+    return { payload: null, message: '가져올 수 없는 QR 내용입니다.' };
   }
 
   const key = `${SHARE_CHUNK_PREFIX}${kind}:${batchId}:${total}`;
@@ -3960,12 +5163,12 @@ function parseShareChunk(value) {
 
   const received = chunks.filter((part) => part).length;
   if (received < total) {
-    return { state: null, message: `QR ${received}/${total} 받았습니다.` };
+    return { payload: null, message: `QR ${received}/${total} 받았습니다.` };
   }
 
-  const state = decodeShareToken(kind, chunks.join(''));
+  const payload = decodeShareToken(kind, chunks.join(''));
   clearShareChunks(key);
-  return state ? { state } : { state: null, message: '가져올 수 없는 QR 내용입니다.' };
+  return payload ? { payload } : { payload: null, message: '가져올 수 없는 QR 내용입니다.' };
 }
 
 function readShareChunks(key, total) {

@@ -49,6 +49,8 @@
 - 라벨은 `GraphCanvas` 안의 `graph-label-frame` / `graph-floating-label` 경계에서 관리한다. 본문 드래그는 이동, 전용 편집 핸들은 텍스트 편집이라는 분리를 유지한다.
 - 라벨 텍스트는 한국어/영어/숫자가 섞여도 잘리지 않아야 한다. 너비, 줄바꿈 높이, 캔버스 클램프를 함께 확인하고 DOM에서 `scrollWidth <= clientWidth`, `scrollHeight <= clientHeight`를 검증한다.
 - 화살표는 `arrows` 배열, `GraphArrowLayer`, `GraphArrowItem`, 공유의 `packArrowsForShare` / `decodeArrowsForShare`까지 이어진다. 보고서/정적 그래프에도 같이 보여야 한다.
+- 보고서 미리보기와 저장 PNG에서 그래프 크기/위치를 바꿀 때는 글자와 화살표의 저장 좌표를 단순 `rect.width * percent`로 다시 해석하지 않는다. `projectGraphCanvasPoint`, `getReportPreviewGraphSvgRect`, `getReportImageGraphSvgRect`처럼 편집 SVG 기준에서 보고서 SVG 기준으로 재투영하는 공통 함수를 함께 확인한다.
+- 그래프 도형의 폭, 비율, 여백, `bar-svg`/`pie-svg` 크기, 보고서 그래프 배치를 바꾸면 라벨 위치, 라벨 크기, 화살표 시작/끝점, 화살표 두께가 편집 화면과 보고서 미리보기/저장 PNG에서 같은 상대 위치로 보이는지 같이 검증한다.
 
 ## QR/공유 규칙
 
@@ -78,6 +80,7 @@
 
 - 코드 변경 후 기본은 `npm run codex:verify`다. 기본 Vite 빌드가 멈추거나 실패하면 스크립트가 Codex 번들 Node로 재시도한다.
 - UI 변경은 브라우저나 DOM으로 확인한다. 빌드만 성공하고 끝내지 않는다.
+- 그래프 관련 UI 변경은 활성 그래프 화면과 보고서 미리보기/저장 이미지 흐름을 함께 확인한다. 특히 라벨/화살표가 있는 상태에서 편집 화면의 상대 위치와 보고서 결과의 상대 위치가 일치하는지 DOM 좌표 또는 스크린샷으로 비교한다.
 - 그래프/표/QR 변경은 저장 후 새로고침, QR/hash round trip, 구버전 payload 복구 가능성을 함께 생각한다.
 - 브라우저가 빈 화면이면 CSS를 의심하기 전에 콘솔 오류와 누락 import를 먼저 확인한다.
 - 스크린샷이 느리거나 실패하면 DOM 스냅샷, 콘솔 로그, 요소 크기/개수 검증을 우선 사용한다.
