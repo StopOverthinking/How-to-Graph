@@ -470,8 +470,7 @@ textarea.text-input:focus {
 }
 
 .plan-next-button,
-.plan-previous-button,
-.plan-present-button {
+.plan-previous-button {
   min-width: 76px;
   height: 44px;
   min-height: 44px;
@@ -493,39 +492,22 @@ textarea.text-input:focus {
   color: var(--muted);
 }
 
-.plan-present-button {
-  grid-gap: 6px;
-  padding: 0 12px;
-  border-color: var(--teal);
-  background: var(--teal);
-  color: #ffffff;
-}
-
 .plan-next-button:hover,
-.plan-previous-button:hover,
-.plan-present-button:hover {
+.plan-previous-button:hover {
   border-color: var(--teal);
   background: #eaf7f5;
   transform: translateY(-1px);
 }
 
-.plan-present-button:hover {
-  border-color: var(--teal-dark);
-  background: var(--teal-dark);
-  color: #ffffff;
-}
-
 .plan-next-button:disabled,
-.plan-previous-button:disabled,
-.plan-present-button:disabled {
+.plan-previous-button:disabled {
   opacity: 0.42;
   cursor: default;
   transform: none;
 }
 
 .plan-next-button:disabled:hover,
-.plan-previous-button:disabled:hover,
-.plan-present-button:disabled:hover {
+.plan-previous-button:disabled:hover {
   border-color: var(--line);
   background: #ffffff;
 }
@@ -648,18 +630,6 @@ textarea.text-input:focus {
   white-space: nowrap;
   color: var(--ink);
   font-weight: 900;
-}
-
-.presentation-script {
-  margin-top: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fbfcfa;
-  color: var(--ink);
-  padding: 10px 12px;
-  font-size: 15px;
-  font-weight: 800;
-  line-height: 1.5;
 }
 
 .plan-title-input:disabled,
@@ -798,7 +768,7 @@ textarea.text-input:focus {
 .graph-workspace {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-gap: var(--tight-gap);
   height: 100%;
   min-width: 0;
@@ -969,6 +939,40 @@ textarea.text-input:focus {
 .graph-report-button,
 .graph-share-button {
   margin-top: 8px;
+}
+
+.graph-presentation-bar {
+  min-width: 0;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  grid-gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.graph-presentation-label {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  grid-gap: 5px;
+  color: var(--teal-dark);
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.graph-presentation-text {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .graph-canvas {
@@ -1719,6 +1723,16 @@ textarea.text-input:focus {
   margin-bottom: 0;
 }
 
+.qr-scope-label {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .qr-graph-type-control {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 8px;
@@ -1934,7 +1948,6 @@ textarea.text-input:focus {
 
   .plan-next-button,
   .plan-previous-button,
-  .plan-present-button,
   .plan-add-button {
     min-width: 60px;
     height: var(--control-height);
@@ -1977,13 +1990,6 @@ textarea.text-input:focus {
     font-size: 13px;
   }
 
-  .presentation-script {
-    margin-top: 6px;
-    padding: 7px 8px;
-    font-size: 13px;
-    line-height: 1.35;
-  }
-
   .manual-table th {
     font-size: 11px;
   }
@@ -2024,6 +2030,21 @@ textarea.text-input:focus {
   .graph-type-control,
   .graph-mode-control {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .graph-presentation-bar {
+    min-height: 36px;
+    grid-gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .graph-presentation-label,
+  .graph-presentation-text {
+    font-size: 12px;
+  }
+
+  .graph-presentation-text {
+    line-height: 1.28;
   }
 
   .segmented-control button {
@@ -2337,7 +2358,6 @@ textarea.text-input:focus {
   .tab-button,
   .plan-next-button,
   .plan-previous-button,
-  .plan-present-button,
   .plan-add-button,
   .graph-action-button,
   .graph-report-button,
@@ -2356,7 +2376,7 @@ textarea.text-input:focus {
     margin-bottom: 4px;
   }
 
-  .presentation-script {
+  .graph-presentation-text {
     line-height: 1.25;
   }
 
@@ -2370,6 +2390,11 @@ textarea.text-input:focus {
     height: min(180px, 32vh);
     height: min(180px, 32dvh);
     margin-bottom: 0;
+  }
+
+  .qr-scope-label {
+    margin-bottom: 6px;
+    font-size: 13px;
   }
 
   .qr-scanner {

@@ -133,13 +133,15 @@ const MAX_LABEL_FONT_SIZE = 34;
 const COUNT_ROW_LABEL = '인원(명)';
 const PERCENTAGE_ROW_LABEL = '백분율(%)';
 const TOTAL_COLUMN_LABEL = '합계';
-const DEFAULT_GRAPH_SCALE = 10;
+const DEFAULT_GRAPH_SCALE = 5;
 const MIN_GRAPH_SCALE = 1;
 const MAX_GRAPH_SCALE = 20;
 const DIVIDER_DRAG_BAR_TOLERANCE = 8;
 const DIVIDER_DRAG_PIE_TOLERANCE = 10;
-const SHARE_VERSION = 3;
+const SHARE_VERSION = 4;
 const LEGACY_SHARE_VERSION = 2;
+const PREVIOUS_SCOPED_SHARE_VERSION = 3;
+const PREVIOUS_DEFAULT_GRAPH_SCALE = 10;
 const SHARE_DEFAULT_TOKEN = '0';
 const SHARE_CHUNK_PREFIX = 'how-to-graph-share-parts:';
 const SHARE_CHUNK_SIZES = [1500, 1200, 950, 720, 540, 400, 300, 220, 160, 110, 72, 44, 24, 12, 6, 3, 1];
@@ -296,7 +298,8 @@ function normalizeStoredGraphMode(value) {
 }
 
 function normalizeGraphType(value, fallback = 'bar') {
-  return value === 'pie' ? 'pie' : fallback;
+  if (value === 'bar' || value === 'pie') return value;
+  return fallback === 'pie' ? 'pie' : 'bar';
 }
 
 function normalizeOptionalGraphType(value) {
@@ -367,6 +370,16 @@ function getSharePayloadLabel(payload) {
     if (graphType) return getGraphTypeLabel(graphType);
   }
   return SHARE_SCOPE_LABELS[payload && payload.scope] || 'QR';
+}
+
+function getSharePayloadDescription(payload) {
+  const scope = payload && payload.scope;
+  if (scope === 'plan') return '계획';
+  if (scope === 'table') return '표 그리기';
+  if (scope === 'graph') return '그래프 그리기';
+  if (scope === 'interpret') return '해석';
+  if (scope === 'full') return '전체';
+  return 'QR';
 }
 
 function normalizeLoadedState(raw) {
@@ -1056,7 +1069,6 @@ function App() {
   });
   const [activeTab, setActiveTab] = useState('plan');
   const [lastPlanStep, setLastPlanStep] = useState(null);
-  const [presentationVisible, setPresentationVisible] = useState(false);
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
@@ -1144,11 +1156,9 @@ function App() {
               plan={state.plan}
               table={state.table}
               initialStep={lastPlanStep}
-              presentationVisible={presentationVisible}
               onChange={(patch) => patchState('plan', patch)}
               onTableChange={(patch) => patchState('table', patch)}
               onStepChange={setLastPlanStep}
-              onShowPresentation={() => setPresentationVisible(true)}
             />
           )}
           {activeTab === 'table' && (
@@ -1205,11 +1215,9 @@ function PlanWorkspace({
   plan,
   table,
   initialStep,
-  presentationVisible,
   onChange,
   onTableChange,
-  onStepChange,
-  onShowPresentation
+  onStepChange
 }) {
   const itemsRef = useRef(null);
   const titleRef = useRef(null);
@@ -1227,7 +1235,6 @@ function PlanWorkspace({
 
   const titleComplete = title.trim().length > 0;
   const itemsComplete = items.every((item) => item.trim().length > 0);
-  const presentationSentence = `저희 모둠의 표 이름은 ${summaryText(title, '표 이름')}입니다. 자료를 ${items.length}개의 항목으로 나누어 표로 정리하고 백분율을 구한 뒤 띠그래프와 원그래프로 함께 나타내려 합니다.`;
   const [visibleStep, setVisibleStep] = useState(() => {
     const activeInitialStep = getAllowedPlanStep(initialStep, titleComplete, itemsComplete);
     return Math.max(getPlanProgressStep(titleComplete, itemsComplete), activeInitialStep);
@@ -1469,9 +1476,6 @@ function PlanWorkspace({
                 <strong>{summaryText(title, '표 이름')}</strong>
               </div>
             </div>
-            {presentationVisible && (
-              <p className="presentation-script" aria-live="polite">{presentationSentence}</p>
-            )}
             <div className="plan-step-actions">
               <button
                 className="plan-previous-button"
@@ -1482,16 +1486,6 @@ function PlanWorkspace({
               >
                 <ChevronLeft size={18} aria-hidden="true" />
                 <span>이전</span>
-              </button>
-              <button
-                className="plan-present-button"
-                type="button"
-                onClick={onShowPresentation}
-                title="발표"
-                aria-label="발표 문장 채우기"
-              >
-                <Megaphone size={18} aria-hidden="true" />
-                <span>발표</span>
               </button>
             </div>
           </section>
@@ -1608,6 +1602,30 @@ function GraphTablePreview({ plan, table }) {
       />
     </section>
   );
+}
+
+function makeGraphPresentationSentence(plan, table) {
+  const itemCount = getPlanItemCount(plan && plan.items, table && table.headerRow);
+  const tableWidth = getTableWidthForItemCount(itemCount);
+  const headerRow = buildHeaderRow(plan && plan.items, table && table.headerRow, tableWidth);
+  const rows = fitRows(table && table.rows, tableWidth);
+  const graphTitle = getPresentationText(plan && plan.title, '(그래프 제목)');
+  const items = headerRow
+    .slice(1, tableWidth - 1)
+    .map((item, index) => getPresentationText(item, `(항목${index + 1})`));
+  const total = getPresentationTotalText(rows[0] && rows[0][tableWidth - 1]);
+
+  return `저희 모둠은 우리 반 ${total}명의 학생을 대상으로, ${graphTitle}을 조사하여 그래프로 만들었습니다. ${items.join(', ')}의 ${items.length}개 항목으로 나눠 정리했습니다.`;
+}
+
+function getPresentationText(value, fallback) {
+  const text = value === undefined || value === null ? '' : String(value).trim();
+  return text || fallback;
+}
+
+function getPresentationTotalText(value) {
+  const text = getPresentationText(value, '(합계)');
+  return text.replace(/\s*명\s*$/, '').trim() || '(합계)';
 }
 
 function GraphScaleControl({ scale, onConfirm }) {
@@ -1842,8 +1860,9 @@ function makeReportImage(report) {
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Canvas is not available.');
 
-  drawReportImage(context, report);
-  const dataUrl = canvas.toDataURL('image/png');
+  const imageBounds = drawReportImage(context, report);
+  const outputCanvas = cropReportImageCanvas(canvas, imageBounds);
+  const dataUrl = outputCanvas.toDataURL('image/png');
   return {
     dataUrl,
     blob: dataUrlToBlob(dataUrl),
@@ -1881,6 +1900,7 @@ function drawReportImage(context, report) {
     width: REPORT_IMAGE_WIDTH - REPORT_IMAGE_MARGIN * 2,
     height: REPORT_IMAGE_HEIGHT - (tableRect.y + tableRect.height + 14) - REPORT_IMAGE_MARGIN
   };
+  const graphLayout = getReportImageGraphLayout(graphRect);
 
   context.save();
   context.fillStyle = '#ffffff';
@@ -1894,8 +1914,15 @@ function drawReportImage(context, report) {
     maxLines: 2
   });
   drawReportImageTable(context, report.headerRow, report.rows, tableRect);
-  drawReportImageGraph(context, report.graph, graphRect);
+  drawReportImageGraph(context, report.graph, graphRect, graphLayout);
   context.restore();
+  return {
+    bottom: Math.max(
+      titleRect.y + titleRect.height,
+      tableRect.y + tableRect.height,
+      getReportImageGraphLayoutBottom(graphLayout)
+    )
+  };
 }
 
 function drawReportImageTable(context, headerRow, rows, rect) {
@@ -1947,16 +1974,42 @@ function getReportImageColumnWidths(columnCount, totalWidth) {
     .concat(totalColumnWidth);
 }
 
-function drawReportImageGraph(context, graph, rect) {
+function drawReportImageGraph(context, graph, rect, layout = getReportImageGraphLayout(rect)) {
   const safeGraph = graph || {};
   context.save();
   context.fillStyle = '#ffffff';
   context.fillRect(rect.x, rect.y, rect.width, rect.height);
 
-  getReportImageGraphLayout(rect).forEach(({ type, graphRect }) => {
+  layout.forEach(({ type, graphRect }) => {
     drawReportImageSingleGraph(context, safeGraph, type, graphRect);
   });
   context.restore();
+}
+
+function getReportImageGraphLayoutBottom(layout) {
+  if (!Array.isArray(layout) || layout.length === 0) return 0;
+  return layout.reduce((bottom, item) => {
+    const rect = item && item.graphRect;
+    if (!rect) return bottom;
+    const nextBottom = Number(rect.y) + Number(rect.height);
+    return Number.isFinite(nextBottom) ? Math.max(bottom, nextBottom) : bottom;
+  }, 0);
+}
+
+function cropReportImageCanvas(sourceCanvas, bounds) {
+  const cropHeight = Math.max(
+    1,
+    Math.min(sourceCanvas.height, Math.ceil(Number(bounds && bounds.bottom) || sourceCanvas.height))
+  );
+  if (cropHeight >= sourceCanvas.height) return sourceCanvas;
+
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = sourceCanvas.width;
+  outputCanvas.height = cropHeight;
+  const context = outputCanvas.getContext('2d');
+  if (!context) return sourceCanvas;
+  context.drawImage(sourceCanvas, 0, 0);
+  return outputCanvas;
 }
 
 function getReportImageGraphLayout(rect) {
@@ -2050,12 +2103,10 @@ function drawReportBarImage(context, graph, segments, rect, targetSvgRect = getR
   drawCanvasRoundRect(context, box.x, box.y, box.width, box.height, box.radius, null, '#1f2d3d', 2.4);
   minorTicks.forEach((tick) => {
     const x = barX(tick);
-    drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top - 2.8), x, viewY(BAR_GRAPH_BOX.top - 0.7), '#aebaca', 1.6);
     drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 0.7), x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 2.8), '#aebaca', 1.6);
   });
   labelTicks.forEach((tick) => {
     const x = barX(tick);
-    drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top - 3.6), x, viewY(BAR_GRAPH_BOX.top - 0.6), '#52606f', 2);
     drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 0.6), x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 4.2), '#52606f', 2);
     setReportCanvasFont(context, 3.1 * scale, 900);
     context.fillStyle = '#52606f';
@@ -2522,6 +2573,7 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
   const activeRenderGraph = getRenderableGraph(graphState, activeType);
   const activeGraphLabel = getGraphTypeLabel(activeType);
   const canUndoGraphAction = Array.isArray(activeDrawing.undoStack) && activeDrawing.undoStack.length > 0;
+  const presentationSentence = makeGraphPresentationSentence(plan, table);
 
   function setGraph(patch) {
     onChange((currentGraph) => {
@@ -2779,6 +2831,14 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
           </div>
         </div>
       </div>
+
+      <section className="graph-presentation-bar" aria-label="발표 문장" aria-live="polite">
+        <span className="graph-presentation-label">
+          <Megaphone size={17} aria-hidden="true" />
+          <span>발표 문장</span>
+        </span>
+        <p className="graph-presentation-text">{presentationSentence}</p>
+      </section>
     </div>
   );
 }
@@ -3988,13 +4048,11 @@ function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
       <rect className="bar-graph-outline" x={box.left} y={box.top} width={box.width} height={box.height} rx={barRadius} />
       {minorTicks.map((tick) => (
         <g key={tick}>
-          <line className="graph-minor-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top - 2.8} y2={box.top - 0.7} />
           <line className="graph-minor-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top + box.height + 0.7} y2={box.top + box.height + 2.8} />
         </g>
       ))}
       {labelTicks.map((tick) => (
         <g key={`label-${tick}`}>
-          <line className="graph-major-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top - 3.6} y2={box.top - 0.6} />
           <line className="graph-major-tick" x1={barPercentX(tick)} x2={barPercentX(tick)} y1={box.top + box.height + 0.6} y2={box.top + box.height + 4.2} />
           <text className="graph-tick-label" x={barPercentX(tick)} y="33" textAnchor="middle" fontSize="3.1">{tick}%</text>
         </g>
@@ -4084,6 +4142,7 @@ function ShareDialog({ state, activeTab, interpretationAnswers, onClose, onImpor
   );
   const activeQrItem = sharePayload.items[Math.min(activeQrIndex, sharePayload.items.length - 1)] || sharePayload.items[0];
   const shareLabel = getSharePayloadLabel(sharePayload);
+  const shareDescription = getSharePayloadDescription(sharePayload);
 
   useEffect(() => {
     setActiveQrIndex(0);
@@ -4125,6 +4184,7 @@ function ShareDialog({ state, activeTab, interpretationAnswers, onClose, onImpor
 
         <div className="share-grid">
           <div className="qr-card">
+            <p className="qr-scope-label" aria-live="polite">{shareDescription}</p>
             {sharePayload.scope === 'graph' && (
               <SegmentedControl
                 className="qr-graph-type-control"
@@ -4330,11 +4390,18 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function normalizeGraphScale(value) {
-  if (value === undefined || value === null || value === '') return DEFAULT_GRAPH_SCALE;
+function normalizeGraphScale(value, fallback = DEFAULT_GRAPH_SCALE) {
+  const safeFallback = normalizeGraphScaleFallback(fallback);
+  if (value === undefined || value === null || value === '') return safeFallback;
   const scale = Math.round(Number(value));
-  if (!Number.isFinite(scale)) return DEFAULT_GRAPH_SCALE;
+  if (!Number.isFinite(scale)) return safeFallback;
   return clamp(scale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+}
+
+function normalizeGraphScaleFallback(value) {
+  const fallback = Math.round(Number(value));
+  if (!Number.isFinite(fallback)) return DEFAULT_GRAPH_SCALE;
+  return clamp(fallback, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
 }
 
 function makeGraphTicks(scale, includeEnd = false) {
@@ -4782,7 +4849,7 @@ function packArrowsForShare(arrows) {
 }
 
 function unpackSharePayload(packed) {
-  if (!packed || (packed.v !== SHARE_VERSION && packed.v !== LEGACY_SHARE_VERSION)) return null;
+  if (!packed || !isSupportedShareVersion(packed.v)) return null;
   if (packed.v === LEGACY_SHARE_VERSION) {
     return { scope: 'full', state: unpackLegacyShareState(packed) };
   }
@@ -4790,13 +4857,23 @@ function unpackSharePayload(packed) {
   const scope = SHARE_SCOPES_BY_CODE[packed.q] || 'plan';
   if (scope === 'plan') return { scope, plan: unpackPlanForShare(packed.p) };
   if (scope === 'table') return { scope, table: unpackTableForShare(packed.t) };
-  if (scope === 'graph') return { scope, ...unpackGraphScopeForShare(packed.g) };
+  if (scope === 'graph') return { scope, ...unpackGraphScopeForShare(packed.g, getShareGraphScaleFallback(packed)) };
   if (scope === 'interpret') return { scope, interpretation: unpackInterpretationForShare(packed.i) };
   return {
     scope: 'full',
     state: unpackLegacyShareState(packed),
     interpretation: unpackInterpretationForShare(packed.i)
   };
+}
+
+function isSupportedShareVersion(version) {
+  return version === SHARE_VERSION || version === PREVIOUS_SCOPED_SHARE_VERSION || version === LEGACY_SHARE_VERSION;
+}
+
+function getShareGraphScaleFallback(packed) {
+  return packed && (packed.v === PREVIOUS_SCOPED_SHARE_VERSION || packed.v === LEGACY_SHARE_VERSION)
+    ? PREVIOUS_DEFAULT_GRAPH_SCALE
+    : DEFAULT_GRAPH_SCALE;
 }
 
 function unpackLegacyShareState(packed) {
@@ -4815,7 +4892,7 @@ function unpackLegacyShareState(packed) {
       rows: unpackRowsForShare(tablePayload, tableWidth),
       tableDefaultsCleared: true
     },
-    graph: unpackGraphForShare(packed.g)
+    graph: unpackGraphForShare(packed.g, getShareGraphScaleFallback(packed))
   });
 }
 
@@ -4851,14 +4928,14 @@ function unpackInterpretationForShare(encoded) {
   return normalizeInterpretationAnswers(asPlainObject(encoded));
 }
 
-function unpackGraphScopeForShare(encoded) {
+function unpackGraphScopeForShare(encoded, scaleFallback = DEFAULT_GRAPH_SCALE) {
   const graph = asPlainObject(encoded);
   const graphType = decodeGraphTypeForShare(graph.y);
-  if (!graphType) return { graph: unpackGraphForShare(encoded) };
+  if (!graphType) return { graph: unpackGraphForShare(encoded, scaleFallback) };
   return {
     graphType,
     graph: {
-      scale: normalizeGraphScale(graph.s),
+      scale: normalizeGraphScale(graph.s, scaleFallback),
       mode: GRAPH_MODES_BY_CODE[graph.m] || 'divide',
       activeColor: decodeColorForShare(graph.a, GRAPH_COLOR_SHARE_PALETTE, GRAPH_COLORS[0]),
       activeType: graphType,
@@ -4893,10 +4970,10 @@ function unpackRowsForShare(tablePayload, width) {
   return [unpackRowForShare(tablePayload.r, width)];
 }
 
-function unpackGraphForShare(encoded) {
+function unpackGraphForShare(encoded, scaleFallback = DEFAULT_GRAPH_SCALE) {
   const graph = asPlainObject(encoded);
   const hasSplitGraph = graph.b || graph.p;
-  const scale = normalizeGraphScale(graph.s);
+  const scale = normalizeGraphScale(graph.s, scaleFallback);
   const legacyType = graph.t === 'p' ? 'pie' : 'bar';
   return {
     scale,
@@ -5126,7 +5203,7 @@ function decodeShareToken(kind, token) {
     const json = decompressFromEncodedURIComponent(clean);
     if (!json) return null;
     const parsed = JSON.parse(json);
-    if (parsed && (parsed.v === SHARE_VERSION || parsed.v === LEGACY_SHARE_VERSION)) {
+    if (parsed && isSupportedShareVersion(parsed.v)) {
       return unpackSharePayload(parsed);
     }
     return { scope: 'full', state: normalizeLoadedState(parsed.state || parsed) };
@@ -5138,7 +5215,7 @@ function decodeShareToken(kind, token) {
 function parseShareJson(json) {
   if (!json) return null;
   const parsed = JSON.parse(json);
-  if (parsed && (parsed.v === SHARE_VERSION || parsed.v === LEGACY_SHARE_VERSION)) {
+  if (parsed && isSupportedShareVersion(parsed.v)) {
     return unpackSharePayload(parsed);
   }
   return { scope: 'full', state: normalizeLoadedState(parsed.state || parsed) };
