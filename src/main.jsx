@@ -20,6 +20,7 @@ import {
   FileText,
   Maximize2,
   Megaphone,
+  Minus,
   MousePointer2,
   PaintBucket,
   PenLine,
@@ -1084,6 +1085,41 @@ function App() {
   });
 
   useEffect(() => {
+    const root = document.documentElement;
+    let frameId = 0;
+
+    function applyAppHeight() {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        const viewportHeight = window.visualViewport && window.visualViewport.height
+          ? window.visualViewport.height
+          : window.innerHeight;
+        if (viewportHeight) root.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+      });
+    }
+
+    applyAppHeight();
+    window.addEventListener('resize', applyAppHeight);
+    window.addEventListener('orientationchange', applyAppHeight);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', applyAppHeight, { passive: true });
+      window.visualViewport.addEventListener('scroll', applyAppHeight, { passive: true });
+    }
+
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', applyAppHeight);
+      window.removeEventListener('orientationchange', applyAppHeight);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', applyAppHeight);
+        window.visualViewport.removeEventListener('scroll', applyAppHeight);
+      }
+      root.style.removeProperty('--app-height');
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem('how-to-graph-state', JSON.stringify(state));
     } catch (error) {
@@ -1543,16 +1579,8 @@ function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = fal
         <thead>
           <tr>
             {headerRow.map((cell, cellIndex) => (
-              <th key={cellIndex}>
-                {readOnly ? (
-                  <span className="manual-table-cell-text">{cell}</span>
-                ) : (
-                  <input
-                    value={cell}
-                    readOnly
-                    aria-label={`머리행 ${cellIndex + 1}열`}
-                  />
-                )}
+              <th key={cellIndex} className={readOnly ? undefined : 'is-static-cell'}>
+                <span className="manual-table-cell-text"><span>{cell}</span></span>
               </th>
             ))}
           </tr>
@@ -1562,10 +1590,14 @@ function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = fal
             <tr key={rowIndex}>
               {row.map((cell, cellIndex) => {
                 const cellReadOnly = readOnly || cellIndex === 0;
+                const cellClassName = [
+                  cellIndex === 0 ? 'title-column-cell' : '',
+                  !readOnly && cellReadOnly ? 'is-static-cell' : ''
+                ].filter(Boolean).join(' ');
                 return (
-                  <td key={cellIndex} className={cellIndex === 0 ? 'title-column-cell' : undefined}>
-                    {readOnly ? (
-                      <span className="manual-table-cell-text">{cell}</span>
+                  <td key={cellIndex} className={cellClassName || undefined}>
+                    {cellReadOnly ? (
+                      <span className="manual-table-cell-text"><span>{cell}</span></span>
                     ) : (
                       <input
                         value={cell}
@@ -1630,72 +1662,42 @@ function getPresentationTotalText(value) {
 
 function GraphScaleControl({ scale, onConfirm }) {
   const currentScale = normalizeGraphScale(scale);
-  const [isOpen, setIsOpen] = useState(false);
-  const [draftScale, setDraftScale] = useState(currentScale);
+  const canDecrease = currentScale > MIN_GRAPH_SCALE;
+  const canIncrease = currentScale < MAX_GRAPH_SCALE;
 
-  useEffect(() => {
-    setDraftScale(currentScale);
-  }, [currentScale]);
-
-  function openSlider() {
-    setDraftScale(currentScale);
-    setIsOpen(true);
-  }
-
-  function confirmScale() {
-    const nextScale = normalizeGraphScale(draftScale);
-    onConfirm(nextScale);
-    setIsOpen(false);
-  }
-
-  function updateDraftFromPointer(event) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (!rect.width) return;
-    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    const nextScale = MIN_GRAPH_SCALE + Math.round(ratio * (MAX_GRAPH_SCALE - MIN_GRAPH_SCALE));
-    setDraftScale(nextScale);
-  }
-
-  function handleSliderPointerMove(event) {
-    if (event.buttons !== 1 && event.pointerType !== 'touch') return;
-    updateDraftFromPointer(event);
+  function changeScale(delta) {
+    const nextScale = normalizeGraphScale(currentScale + delta);
+    if (nextScale !== currentScale) onConfirm(nextScale);
   }
 
   return (
     <div className="scale-control">
       <div className="scale-control-top">
         <span>눈금 크기</span>
-        <button
-          className="scale-value-button"
-          type="button"
-          onClick={openSlider}
-          aria-expanded={isOpen}
-          aria-controls="graph-scale-slider"
-          aria-label={`눈금 크기 ${currentScale}% 조정`}
-        >
-          {currentScale}%
-        </button>
-      </div>
-      {isOpen && (
-        <div className="scale-slider-row" id="graph-scale-slider">
-          <input
-            type="range"
-            min={MIN_GRAPH_SCALE}
-            max={MAX_GRAPH_SCALE}
-            step="1"
-            value={draftScale}
-            onInput={(event) => setDraftScale(Number(event.currentTarget.value))}
-            onChange={(event) => setDraftScale(Number(event.target.value))}
-            onPointerDown={updateDraftFromPointer}
-            onPointerMove={handleSliderPointerMove}
-            aria-label="눈금 크기"
-          />
-          <output>{draftScale}%</output>
-          <button className="scale-confirm-button" type="button" onClick={confirmScale}>
-            확인
+        <div className="scale-stepper" role="group" aria-label={`눈금 크기 ${currentScale}%`}>
+          <button
+            className="scale-step-button"
+            type="button"
+            onClick={() => changeScale(-1)}
+            disabled={!canDecrease}
+            title="눈금 줄이기"
+            aria-label="눈금 줄이기"
+          >
+            <Minus size={16} aria-hidden="true" />
+          </button>
+          <output className="scale-value" aria-live="polite">{currentScale}%</output>
+          <button
+            className="scale-step-button"
+            type="button"
+            onClick={() => changeScale(1)}
+            disabled={!canIncrease}
+            title="눈금 키우기"
+            aria-label="눈금 키우기"
+          >
+            <Plus size={16} aria-hidden="true" />
           </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1724,7 +1726,8 @@ function ReportDialog({ plan, table, graph, onClose }) {
     setMessage('');
 
     try {
-      await ensureReportFontsReady();
+      // iOS Safari can block share/window fallbacks if an await consumes the tap activation.
+      if (!isIosSafari()) await ensureReportFontsReady();
       const image = makeReportImage({ title, headerRow, rows, tableWidth, graph });
       const nextMessage = await saveReportImageFile(image);
       if (nextMessage) setMessage(nextMessage);

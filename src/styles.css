@@ -23,9 +23,16 @@
   --small-control-height: 40px;
   --table-cell-height: 40px;
   --compact-table-cell-height: 32px;
+  --app-height: 100vh;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--page);
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-height: 100dvh;
+  }
 }
 
 * {
@@ -36,8 +43,7 @@ body {
   margin: 0;
   min-width: 320px;
   width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: var(--app-height);
   overflow: hidden;
   background: var(--page);
 }
@@ -62,8 +68,7 @@ button {
 
 .app-shell {
   width: 100%;
-  height: 100vh;
-  height: 100dvh;
+  height: var(--app-height);
   max-width: 1240px;
   margin: 0 auto;
   padding: var(--page-gap);
@@ -715,7 +720,21 @@ textarea.text-input:focus {
   justify-content: center;
   line-height: 1.2;
   white-space: pre-wrap;
+}
+
+.manual-table-cell-text > span {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.manual-table .is-static-cell {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .manual-table th input,
@@ -819,7 +838,7 @@ textarea.text-input:focus {
 
 .scale-control-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
+  grid-template-columns: minmax(0, 1fr) 124px;
   grid-gap: 8px;
   align-items: center;
 }
@@ -830,50 +849,46 @@ textarea.text-input:focus {
   font-weight: 800;
 }
 
-.scale-value-button,
-.scale-confirm-button {
+.scale-stepper {
+  display: grid;
+  grid-template-columns: 34px minmax(42px, 1fr) 34px;
+  grid-gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.scale-step-button,
+.scale-value {
   min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: #ffffff;
   color: var(--ink);
-  cursor: pointer;
   font-weight: 800;
 }
 
-.scale-value-button {
-  padding: 0 8px;
-}
-
-.scale-value-button[aria-expanded="true"] {
-  border-color: var(--teal);
-  color: var(--teal-dark);
-  box-shadow: inset 0 0 0 1px rgba(43, 179, 163, 0.18);
-}
-
-.scale-slider-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px 56px;
-  grid-gap: 8px;
+.scale-step-button {
+  display: inline-flex;
   align-items: center;
-  margin-top: 8px;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
 }
 
-.scale-slider-row input[type="range"] {
-  width: 100%;
-  min-width: 0;
-  accent-color: var(--teal);
+.scale-step-button:disabled {
+  background: #f4f6f4;
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.72;
 }
 
-.scale-slider-row output {
-  color: var(--ink);
+.scale-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
   font-size: 13px;
-  font-weight: 800;
   text-align: center;
-}
-
-.scale-confirm-button {
-  padding: 0 8px;
 }
 
 .graph-main {
@@ -1496,8 +1511,8 @@ textarea.text-input:focus {
 }
 
 .sentence-blank-wrap {
-  --sentence-blank-base-width: 29px;
-  --sentence-blank-content-width: 29px;
+  --sentence-blank-base-width: 46px;
+  --sentence-blank-content-width: 46px;
   flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
@@ -1508,7 +1523,7 @@ textarea.text-input:focus {
 }
 
 .sentence-blank-wrap.is-short {
-  --sentence-blank-base-width: 24px;
+  --sentence-blank-base-width: 40px;
 }
 
 .sentence-blank {
@@ -1521,9 +1536,9 @@ textarea.text-input:focus {
   background: #fbfcfa;
   color: var(--ink);
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 900;
-  padding: 0 5px;
+  padding: 0 6px;
   text-align: center;
 }
 
@@ -1866,13 +1881,6 @@ textarea.text-input:focus {
   }
 }
 
-@media (orientation: landscape) and (min-width: 700px) and (max-width: 900px) {
-  .interpretation-workspace {
-    grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
-    grid-template-rows: none;
-  }
-}
-
 @media (max-width: 700px) {
   :root {
     --page-gap: 8px;
@@ -2062,25 +2070,23 @@ textarea.text-input:focus {
   }
 
   .scale-control-top {
-    grid-template-columns: minmax(0, 1fr) 52px;
+    grid-template-columns: minmax(0, 1fr) 110px;
     grid-gap: 5px;
   }
 
   .scale-control-top span,
-  .scale-slider-row output {
+  .scale-value {
     font-size: 12px;
   }
 
-  .scale-value-button,
-  .scale-confirm-button {
+  .scale-stepper {
+    grid-template-columns: 30px minmax(34px, 1fr) 30px;
+  }
+
+  .scale-step-button,
+  .scale-value {
     min-height: 30px;
     font-size: 12px;
-  }
-
-  .scale-slider-row {
-    grid-template-columns: minmax(0, 1fr) 32px 44px;
-    grid-gap: 5px;
-    margin-top: 4px;
   }
 
   .graph-action-row {
@@ -2189,20 +2195,21 @@ textarea.text-input:focus {
   }
 
   .sentence-blank-wrap {
-    height: 28px;
-    font-size: 13px;
+    height: 32px;
+    font-size: 16px;
   }
 
   .sentence-blank-wrap {
-    --sentence-blank-base-width: 24px;
+    --sentence-blank-base-width: 42px;
   }
 
   .sentence-blank-wrap.is-short {
-    --sentence-blank-base-width: 20px;
+    --sentence-blank-base-width: 36px;
   }
 
   .sentence-blank {
-    font-size: 13px;
+    font-size: 16px;
+    padding: 0 5px;
   }
 
 }
@@ -2227,6 +2234,11 @@ textarea.text-input:focus {
 }
 
 @media (min-width: 620px) and (max-width: 900px) and (min-aspect-ratio: 9/10) {
+  .interpretation-workspace {
+    grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
+    grid-template-rows: none;
+  }
+
   .graph-layout {
     grid-template-columns: clamp(168px, 26vw, 210px) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
@@ -2277,26 +2289,23 @@ textarea.text-input:focus {
   }
 
   .graph-layout .scale-control-top {
-    grid-template-columns: minmax(0, 1fr) 52px;
+    grid-template-columns: minmax(0, 1fr) 104px;
     grid-gap: 5px;
   }
 
   .graph-layout .scale-control-top span,
-  .graph-layout .scale-slider-row output {
+  .graph-layout .scale-value {
     font-size: 12px;
   }
 
-  .graph-layout .scale-value-button,
-  .graph-layout .scale-confirm-button {
+  .graph-layout .scale-stepper {
+    grid-template-columns: 30px minmax(28px, 1fr) 30px;
+  }
+
+  .graph-layout .scale-step-button,
+  .graph-layout .scale-value {
     min-height: 30px;
-    padding: 0 6px;
     font-size: 12px;
-  }
-
-  .graph-layout .scale-slider-row {
-    grid-template-columns: minmax(0, 1fr) 32px 44px;
-    grid-gap: 5px;
-    margin-top: 4px;
   }
 
   .graph-layout .graph-action-row {
