@@ -76,7 +76,49 @@
 
 - 로컬 기준 URL은 `http://127.0.0.1:5173/`이다. 이 환경에서는 `localhost:5173`이 응답하지 않을 수 있으므로 HTTP 상태를 직접 확인한다.
 - `scripts/open-external-link.ps1`는 의존성 확인, 로컬 서버 기동, `wrangler tunnel quick-start` 실행을 포함한다. 임시 공개 URL은 터널 출력이 원본이다.
+- 외부 링크를 열어 달라는 요청은 사용자용 `외부 링크 열기.cmd`를 우선 그대로 실행한다. 링크 확인을 위해 출력 캡처가 필요할 때도 런처를 우회하지 말고 같은 `.cmd`를 백그라운드/리다이렉트로 실행해 터널 출력의 `trycloudflare.com` URL을 읽는다.
 - 외부 링크를 열어 달라는 요청은 설명이 아니라 실제 실행 요청으로 처리한다. 스크립트/런처를 먼저 확인하고, URL이 나오면 HTTP 확인 뒤 연다.
+
+## 발표용 애니메이션/녹화
+
+- 직접 화면 녹화보다 `scripts/record-demo.mjs`의 Playwright 기반 녹화를 우선 사용한다. 이 방식은 실제 앱을 조작하면서 포인터, 클릭 효과, 설명 오버레이, 음향을 결정적으로 재현한다.
+- 데모 오버레이는 `?demo=1` 또는 `?recordDemo=1`에서만 켜진다. `src/main.jsx`의 `DemoOverlay`가 `window.HowToGraphDemo` API를 노출하며, 스크립트는 `movePointer`, `clickAt`, `clickTarget`, `showSpotlight`, `clearSpotlight`를 사용한다.
+- 녹화 대상 요소에는 안정적인 `data-demo-id`를 붙인다. 스크립트에서는 `selectorForDemoId()`로 접근하고, 마우스가 입력 텍스트를 가리지 않도록 입력칸 오른쪽처럼 실제 클릭 좌표를 명시한다.
+- 기본 녹화 명령은 전체 데모 `npm run demo:record`, 계획 단계 데모 `npm run demo:record:plan`이다. 출력은 `output/playwright/demo/<scenario>/<timestamp>/` 아래에 저장한다. 기본 녹화는 `.webm`과 음향 포함 `.mp4`를 만들며, 프레임 시퀀스는 움직임보다 정지 화질 검증이 중요할 때만 `DEMO_CAPTURE=frames`로 명시해 사용한다.
+- `DEMO_ZOOM`이 1보다 큰 녹화는 업스케일링으로 처리하지 않는다. 기본 `video` 모드에서는 출력 뷰포트를 `DEMO_WIDTH` × `DEMO_HEIGHT`로 두고 앱을 `DEMO_WIDTH / DEMO_ZOOM` × `DEMO_HEIGHT / DEMO_ZOOM` 레이아웃으로 CSS `zoom` 확대하여 Playwright 비디오의 25fps와 음향 싱크를 유지한다. 예를 들어 FHD에서 요소를 크게 보이게 하려면 `DEMO_WIDTH=1920 DEMO_HEIGHT=1080 DEMO_ZOOM=1.5`를 사용해 `1280x720` 레이아웃을 FHD 비디오에 직접 렌더링한다. `DEMO_CAPTURE=frames`는 스크린샷 반복 저장이라 시스템 부하가 크면 FPS와 싱크가 흔들릴 수 있으므로 발표용 최종 영상의 기본값으로 쓰지 않는다.
+- 녹화 URL은 `http://127.0.0.1:5173/?demo=1&demoReset=1`을 기본으로 한다. 스크립트가 서버 응답을 확인하고 필요하면 Vite dev server를 기동하되, 결과 확인에는 `localhost`보다 `127.0.0.1`을 사용한다.
+- 발표용 포인터는 앱의 주색 `#95d9d1`과 어울리는 강조색 `#cb838c` 단색을 사용하고, 흰색 얇은 테두리(`stroke-width: 1.8`)를 둔다. 네온 효과와 포인터 안의 별도 점은 쓰지 않는다.
+- 설명 오버레이는 배경을 어둡게 처리한 spotlight와 함께 사용한다. 설명 텍스트는 짧게 쓰고, `Gowun Dodum` 폰트와 가운데 정렬을 유지하며, 네온처럼 보이는 밝은 역방향 그림자 대신 차분하고 은은한 드롭 섀도우를 사용한다.
+- 클릭/강조/타이핑 음향은 `public/demo-sounds/`의 `click.ogg`, `highlight.ogg`, `typing.ogg`를 사용한다. 타이핑은 글자 입력 중 `recordTypingSounds()`로 연속 이벤트를 찍고, `ffmpeg-static`으로 AAC 오디오가 포함된 MP4를 만든다.
+- 녹화 후에는 `npm run codex:verify`와 실제 녹화 명령을 모두 확인한다. 오버레이 스타일 변경은 필요하면 짧은 Playwright 캡처로 DOM 계산값과 스크린샷을 같이 확인한다.
+
+### 계획 단계 발표 영상 기준값
+
+- 마지막 승인본과 같은 계획 단계 영상을 만들 때는 PowerShell에서 `$env:DEMO_WIDTH='1920'; $env:DEMO_HEIGHT='1080'; $env:DEMO_ZOOM='1.5'; $env:DEMO_CAPTURE='video'; npm run demo:record:plan`을 사용한다.
+- 녹화 URL은 `http://127.0.0.1:5173/?demo=1`이며, 시나리오 시작 전에 localStorage를 2개 빈 항목 상태로 seed한다. 출력은 `output/playwright/demo/plan/<timestamp>/` 아래의 Playwright `.webm`, 음향 포함 `.mp4`, 최종 스크린샷, `.sound-events.json`, `recording-meta.json`이다.
+- 비디오 제작 방식은 Playwright Chromium video capture다. 출력 뷰포트와 `recordVideo.size`는 `1920x1080`, `deviceScaleFactor`는 `1`, `locale`은 `ko-KR`, 기본 headless 실행이다. `DEMO_ZOOM=1.5`에서는 앱을 `1280x720` 레이아웃으로 만든 뒤 CSS `zoom: 1.5`로 FHD 안에 직접 렌더링한다. `window.__HOW_TO_GRAPH_DEMO_VIEWPORT_ZOOM=1.5`로 데모 오버레이 좌표를 보정한다.
+- MP4 합성은 `ffmpeg-static`을 사용한다. WebM 비디오는 `recordingTrimStartMs`부터 `trim`, `setpts=PTS-STARTPTS`로 정렬하고, `libx264`, `preset slow`, `crf 15`, `+faststart`, `yuv420p`로 인코딩한다. 오디오는 48kHz stereo silence track 위에 이벤트 사운드를 `adelay`로 배치한 뒤 AAC 160k로 만들고 MP4에는 copy한다.
+- 사운드 파일은 `typing.ogg`, `click.ogg`, `highlight.ogg`이며 전체 볼륨 배율은 `1.5`다. 최종 볼륨은 타이핑 `0.42`, 클릭 `0.51`, 강조 `0.69`다. 타이핑 사운드는 공백을 제외한 글자마다 찍고, 사운드 간격은 `Math.max(32, keyDelay)`다.
+- 계획 단계 시나리오는 반드시 항목 `탄산음료`, `과일주스`, `차/커피`, `기타`와 제목 `우리 반 학생이 좋아하는 음료수 종류의 비율`을 사용한다. 설명 문구는 `표로 정리할 항목 정하기`, `표의 이름 정하기`, `계획 확인`만 사용한다.
+- 시작 상태에서 첫 번째 항목 입력칸 오른쪽(`xRatio: 0.86`)을 클릭한다. 이 최초 클릭은 포인터 이동 `220ms`, 클릭 애니메이션 `180ms` 기본값을 사용한다. 곧바로 첫 번째 항목 입력칸을 `placement: right`로 spotlight 처리하고 `표로 정리할 항목 정하기`를 `3000ms` 표시한 뒤 `clearSpotlight`한다.
+- 항목 입력 구간은 각 입력 및 추가 동작 뒤 `500ms` 지연한다. 항목 입력은 모두 입력칸 오른쪽(`clickXRatio: 0.86`)을 클릭하고, 포인터 이동 `110ms`, 클릭 애니메이션 `90ms`, 키 입력 지연 `28ms/글자`, 타이핑 사운드 간격 `32ms/글자`를 사용한다. `탄산음료`, `과일주스`를 입력한 뒤 `plan-add-item`을 2회 클릭하고, `차/커피`, `기타`를 입력한다.
+- 항목 단계의 `다음` 버튼은 기본 `clickTarget` 경로로 클릭하고 클릭 뒤 `1200ms` 지연한다. 그 다음 제목 입력칸을 `placement: bottom`으로 spotlight 처리하고 `표의 이름 정하기`를 `3000ms` 표시한 뒤 `clearSpotlight`한다.
+- 제목 입력은 기본 `clickTarget` 경로로 입력칸을 클릭하고 `Control+A` 후 입력한다. 키 입력 지연은 `45ms/글자`, 타이핑 사운드 간격은 `45ms/글자`, 입력 뒤 지연은 `1500ms`다.
+- 제목 단계의 `다음` 버튼은 기본 `clickTarget` 경로로 클릭하고 클릭 뒤 `1000ms` 지연한다. 이후 `.plan-sheet-screen` 전체를 `placement: bottom`으로 spotlight 처리하고 `계획 확인`을 `3000ms` 표시한 뒤 `clearSpotlight`, 마지막으로 `300ms` 대기한다.
+- 오버레이의 기본 spotlight padding은 `12px`, radius는 `10px`, spotlight 전환은 `220ms`다. 클릭 ring은 `720ms`, target glow는 `560ms`, callout 위치 전환은 `220ms`다.
+- 설명 텍스트박스는 `min-width: 260px`, `padding: 14px 16px`, `border-radius: 8px`, `background: #f7f8f4`, `font-family: Gowun Dodum`, 가운데 정렬이다. 그림자는 `0 16px 34px rgba(10, 16, 24, 0.20)`, `0 3px 10px rgba(10, 16, 24, 0.10)`, `inset 0 1px 0 rgba(255,255,255,0.72)`만 사용한다.
+- 발표용 포인터는 `52x52px` 컨테이너 안에 `MousePointer2` `44px`를 렌더링한다. 포인터 색은 `#cb838c`, 흰색 테두리 stroke width는 `1.8`, 기본 위치 보정은 `translate(-7px, -5px)`, 클릭 중 scale은 `0.9`다.
+- 기준 검증은 MP4가 `1920x1080`, `25fps`, H.264 video, AAC audio를 포함하고 `ffmpeg -v error -i <mp4> -f null -`가 성공하는 것이다. 대표 프레임은 첫 항목 설명, 제목 설명, 계획 확인 구간을 추출해 요소 크기, spotlight 위치, 포인터 위치, 설명 텍스트박스 그림자를 눈으로 확인한다.
+
+### 그래프 만들기 발표 영상 기준값
+
+- 마지막 승인본과 같은 그래프 만들기 영상을 만들 때는 PowerShell에서 `$env:DEMO_WIDTH='1920'; $env:DEMO_HEIGHT='1080'; $env:DEMO_ZOOM='1.5'; $env:DEMO_CAPTURE='video'; npm run demo:record:graph`를 사용한다.
+- 녹화는 표 탭에서 시작하며 localStorage를 제목 `우리 반 학생이 좋아하는 음료수 종류의 비율`, 항목 `탄산음료`, `과일주스`, `차/커피`, `기타`, 인원 `8`, `6`, `4`, `2`, `20`, 백분율 `40`, `30`, `20`, `10`, `100`으로 seed한다.
+- 그래프 눈금 크기는 `10%`이며 띠그래프와 원그래프 모두 구분선 `40%`, `70%`, `90%`를 사용한다.
+- 설명 문구는 순서대로 `그래프 그리기 시작`, `그래프 종류 선택`, `눈금 크기 선택`, `그래프 칸 나누기`, `색칠하기`, `항목 이름과 백분율 적기`, `좁은 칸은 화살표 사용`, `친구의 그래프를 받아오기`, `완성 후 보고서 다운로드`, `다운로드한 보고서를 띵커벨에 제출`만 사용한다.
+- 라벨은 `탄산음료\n(40%)`, `과일주스\n(30%)`, `차/커피\n(20%)`, `기타\n(10%)` 형식으로 넣는다. 좁은 `기타` 칸은 칸 밖 라벨과 화살표를 사용한다.
+- QR 장면은 QR 버튼을 하이라이트한 뒤 실제 QR 창을 2초간 보여주고 닫는다. 보고서 장면은 보고서 이미지 버튼을 하이라이트한 뒤 실제 이미지 저장을 실행하고 창을 닫는다.
+- 완성 영상과 보고서 PNG 같은 결과물은 `output/playwright/demo/graph/<timestamp>/` 아래에 생성되며 Git에는 포함하지 않는다. 재현용 스크립트, 데모 사운드, 패키지 의존성, 데모 모드 UI 코드만 커밋한다.
 
 ## 검증 기준
 

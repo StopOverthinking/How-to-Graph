@@ -7,6 +7,10 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "demo:record": "node scripts/record-demo.mjs",
+    "demo:record:plan": "node scripts/record-demo.mjs --scenario=plan",
+    "demo:record:table": "node scripts/record-demo.mjs --scenario=table",
+    "demo:record:graph": "node scripts/record-demo.mjs --scenario=graph",
     "codex:context": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/codex-context.ps1",
     "codex:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/codex-verify.ps1"
   },
@@ -22,6 +26,8 @@
     "vite": "^7.2.6"
   },
   "devDependencies": {
+    "ffmpeg-static": "^5.3.0",
+    "playwright": "^1.60.0",
     "terser": "^5.44.1"
   },
   "browserslist": [

@@ -138,6 +138,8 @@ const COUNT_ROW_LABEL = '인원(명)';
 const PERCENTAGE_ROW_LABEL = '백분율(%)';
 const TOTAL_COLUMN_LABEL = '합계';
 const DEFAULT_GRAPH_SCALE = 5;
+const MIN_GRAPH_SCALE = 1;
+const MAX_GRAPH_SCALE = 20;
 const DIVIDER_DRAG_BAR_TOLERANCE = 8;
 const DIVIDER_DRAG_PIE_TOLERANCE = 10;
 const SHARE_VERSION = 4;
@@ -210,6 +212,8 @@ const REPORT_IMAGE_FONT_FAMILY = 'Inter, "Apple SD Gothic Neo", "Noto Sans KR", 
 const REPORT_IMAGE_TITLE_FONT_FAMILY = '"Jua", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif';
 const REPORT_IMAGE_TITLE_FONT_LOAD = '400 72px "Jua"';
 const chunkMemory = new Map();
+const DEMO_API_NAME = 'HowToGraphDemo';
+const DEMO_APP_API_NAME = 'HowToGraphAppDemo';
 
 let idSeed = 1;
 function makeId(prefix) {
@@ -222,6 +226,33 @@ function createDefaultSelfAssessmentAnswers() {
     ...answers,
     [question.id]: ''
   }), {});
+}
+
+function hasQueryFlag(name) {
+  if (typeof window === 'undefined') return false;
+  try {
+    return new URLSearchParams(window.location.search).has(name);
+  } catch (error) {
+    return false;
+  }
+}
+
+function isDemoModeEnabled() {
+  return hasQueryFlag('demo') || hasQueryFlag('recordDemo');
+}
+
+function isDemoResetRequested() {
+  return hasQueryFlag('demoReset');
+}
+
+function getInitialDemoTab() {
+  if (!isDemoModeEnabled() || typeof window === 'undefined') return null;
+  try {
+    const tabId = new URLSearchParams(window.location.search).get('demoTab');
+    return TABS.some((tab) => tab.id === tabId) ? tabId : null;
+  } catch (error) {
+    return null;
+  }
 }
 
 function createDefaultGraphDrawing(type) {
@@ -648,7 +679,7 @@ function measureLabelLineWidth(line, fontSize, inputElement) {
       const fontFamily = computedStyle && computedStyle.fontFamily
         ? computedStyle.fontFamily
         : 'system-ui, sans-serif';
-      context.font = `900 ${fontSize}px ${fontFamily}`;
+      context.font = `700 ${fontSize}px ${fontFamily}`;
       return context.measureText(line).width;
     }
   }
@@ -1215,8 +1246,13 @@ function applyScopedStateImport(currentState, payload, options = {}) {
 }
 
 function App() {
+  const demoMode = isDemoModeEnabled();
   const [state, setState] = useState(() => {
     try {
+      if (isDemoResetRequested()) {
+        window.localStorage.removeItem('how-to-graph-state');
+        return createDefaultState();
+      }
       const hashState = readStateFromHash();
       if (hashState) return hashState;
       const saved = window.localStorage.getItem('how-to-graph-state');
@@ -1225,7 +1261,7 @@ function App() {
       return createDefaultState();
     }
   });
-  const [activeTab, setActiveTab] = useState('plan');
+  const [activeTab, setActiveTab] = useState(() => getInitialDemoTab() || 'plan');
   const [lastPlanStep, setLastPlanStep] = useState(null);
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
@@ -1234,6 +1270,10 @@ function App() {
   const [selfAssessmentAnswers, setSelfAssessmentAnswers] = useState(createDefaultSelfAssessmentAnswers);
   const [interpretationAnswers, setInterpretationAnswers] = useState(() => {
     try {
+      if (isDemoResetRequested()) {
+        window.localStorage.removeItem(INTERPRETATION_STORAGE_KEY);
+        return createDefaultInterpretationAnswers();
+      }
       const hashAnswers = readInterpretationFromHash();
       if (hashAnswers) return hashAnswers;
       const saved = window.localStorage.getItem(INTERPRETATION_STORAGE_KEY);
@@ -1298,6 +1338,58 @@ function App() {
     }
   }, [interpretationAnswers]);
 
+  useEffect(() => {
+    if (!demoMode || typeof window === 'undefined') return undefined;
+    const api = {
+      setGraphAnnotations(type, annotations = {}) {
+        const graphType = normalizeGraphType(type, 'bar');
+        setState((previous) => {
+          const graphState = normalizeGraphState(previous.graph);
+          const drawing = getGraphDrawing(graphState, graphType);
+          const labels = Array.isArray(annotations.labels)
+            ? annotations.labels.map((label) => normalizeGraphLabel({
+              id: label.id || makeId('label'),
+              text: label.text,
+              x: label.x,
+              y: label.y,
+              width: label.width,
+              fontSize: label.fontSize,
+              color: label.color
+            }))
+            : drawing.labels;
+          const arrows = Array.isArray(annotations.arrows)
+            ? sanitizeGraphArrows(annotations.arrows.map((arrow) => ({
+              id: arrow.id || makeId('arrow'),
+              x1: arrow.x1,
+              y1: arrow.y1,
+              x2: arrow.x2,
+              y2: arrow.y2
+            })))
+            : drawing.arrows;
+
+          return {
+            ...previous,
+            graph: normalizeGraphState({
+              ...graphState,
+              activeType: graphType,
+              [graphType]: {
+                ...drawing,
+                labels,
+                arrows,
+                type: graphType
+              }
+            })
+          };
+        });
+      }
+    };
+
+    window[DEMO_APP_API_NAME] = api;
+    return () => {
+      if (window[DEMO_APP_API_NAME] === api) delete window[DEMO_APP_API_NAME];
+    };
+  }, [demoMode]);
+
   function patchState(section, patch) {
     setState((previous) => ({
       ...previous,
@@ -1359,7 +1451,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-demo-mode={demoMode ? 'true' : undefined}>
       <div className="navigation-row">
         <nav className="tabbar" aria-label="작업 단계">
           {TABS.map((tab) => {
@@ -1369,6 +1461,7 @@ function App() {
                 key={tab.id}
                 className={`tab-button ${activeTab === tab.id ? 'is-active' : ''}`}
                 type="button"
+                data-demo-id={`tab-${tab.id}`}
                 onClick={() => setActiveTab(tab.id)}
               >
                 <Icon size={19} aria-hidden="true" />
@@ -1376,8 +1469,8 @@ function App() {
               </button>
             );
           })}
-          {QR_SHARING_ENABLED && (
-            <button className="icon-button qr-nav-button" type="button" onClick={() => setShareOpen(true)} title="QR 보내기 / 받기" aria-label="QR 보내기 / 받기">
+          {(QR_SHARING_ENABLED || demoMode) && (
+            <button className="icon-button qr-nav-button" type="button" data-demo-id="qr-button" onClick={() => setShareOpen(true)} title="QR 보내기 / 받기" aria-label="QR 보내기 / 받기">
               <QrCode size={21} aria-hidden="true" />
             </button>
           )}
@@ -1423,7 +1516,7 @@ function App() {
         </section>
       </main>
 
-      {QR_SHARING_ENABLED && shareOpen && (
+      {(QR_SHARING_ENABLED || demoMode) && shareOpen && (
         <ShareDialog
           state={state}
           activeTab={activeTab}
@@ -1443,8 +1536,239 @@ function App() {
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
+      {demoMode && <DemoOverlay />}
     </div>
   );
+}
+
+function getDemoOverlayScale() {
+  if (typeof window === 'undefined') return 1;
+  const value = Number(window.__HOW_TO_GRAPH_DEMO_VIEWPORT_ZOOM);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+function DemoOverlay() {
+  const clickIdRef = useRef(0);
+  const [pointer, setPointer] = useState({ x: 86, y: 86, visible: true, pressed: false, duration: 0 });
+  const [clicks, setClicks] = useState([]);
+  const [spotlight, setSpotlight] = useState(null);
+  const [callout, setCallout] = useState(null);
+  const [targetGlow, setTargetGlow] = useState(null);
+
+  useEffect(() => {
+    const wait = (duration) => new Promise((resolve) => window.setTimeout(resolve, Math.max(0, duration || 0)));
+    const toOverlayPoint = (point) => {
+      const scale = getDemoOverlayScale();
+      return {
+        x: point.x / scale,
+        y: point.y / scale
+      };
+    };
+    const toOverlayRect = (rect) => {
+      if (!rect) return null;
+      const scale = getDemoOverlayScale();
+      return {
+        left: rect.left / scale,
+        top: rect.top / scale,
+        width: rect.width / scale,
+        height: rect.height / scale
+      };
+    };
+
+    function getTargetRect(target, padding = 10) {
+      let element = null;
+      if (typeof target === 'string') element = document.querySelector(target);
+      if (target && typeof target === 'object' && typeof target.getBoundingClientRect === 'function') element = target;
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      const left = clamp(rect.left - padding, 8, window.innerWidth - 16);
+      const top = clamp(rect.top - padding, 8, window.innerHeight - 16);
+      const right = clamp(rect.right + padding, left + 8, window.innerWidth - 8);
+      const bottom = clamp(rect.bottom + padding, top + 8, window.innerHeight - 8);
+      return {
+        left,
+        top,
+        width: right - left,
+        height: bottom - top
+      };
+    }
+
+    function getPointFromTarget(target) {
+      const rect = getTargetRect(target, 0);
+      if (!rect) return null;
+      return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      };
+    }
+
+    const api = {
+      ready: true,
+      async movePointer({ x, y, duration = 360, visible = true }) {
+        const point = toOverlayPoint({ x, y });
+        setPointer((current) => ({ ...current, ...point, duration, visible }));
+        await wait(duration);
+      },
+      async pointTo({ selector, x, y, duration = 360 }) {
+        const point = selector ? getPointFromTarget(selector) : { x, y };
+        if (!point) return false;
+        await api.movePointer({ ...point, duration });
+        return point;
+      },
+      async clickAt({ x, y, duration = 260 }) {
+        const clickId = clickIdRef.current + 1;
+        clickIdRef.current = clickId;
+        const point = toOverlayPoint({ x, y });
+        setPointer((current) => ({ ...current, ...point, visible: true, pressed: true, duration: 80 }));
+        setClicks((current) => current.concat({ id: clickId, ...point }));
+        window.setTimeout(() => {
+          setClicks((current) => current.filter((click) => click.id !== clickId));
+        }, 720);
+        await wait(120);
+        setPointer((current) => ({ ...current, pressed: false, duration: 120 }));
+        await wait(duration);
+      },
+      async clickTarget({ selector, duration = 260 }) {
+        const point = getPointFromTarget(selector);
+        const rect = getTargetRect(selector, 8);
+        if (!point) return false;
+        if (rect) setTargetGlow({ ...toOverlayRect(rect), id: clickIdRef.current + 1 });
+        await api.movePointer({ ...point, duration: 220 });
+        await api.clickAt({ ...point, duration });
+        window.setTimeout(() => setTargetGlow(null), 560);
+        return point;
+      },
+      showSpotlight({ selector, rect, title = '', text = '', placement = 'auto', padding = 12, radius = 10, calloutGap, calloutHeight } = {}) {
+        const targetRect = rect || getTargetRect(selector, padding);
+        const nextRect = toOverlayRect(targetRect);
+        setSpotlight(nextRect ? { ...nextRect, radius } : null);
+        setCallout(text || title ? { title, text, placement, gap: calloutGap, height: calloutHeight } : null);
+        return nextRect;
+      },
+      setCallout({ title = '', text = '', placement = 'center', calloutGap, calloutHeight } = {}) {
+        setCallout(text || title ? { title, text, placement, gap: calloutGap, height: calloutHeight } : null);
+      },
+      clearSpotlight() {
+        setSpotlight(null);
+        setCallout(null);
+        setTargetGlow(null);
+      },
+      setPointerVisible(visible) {
+        setPointer((current) => ({ ...current, visible: !!visible, duration: 120 }));
+      },
+      reset() {
+        setPointer({ x: 86, y: 86, visible: true, pressed: false, duration: 0 });
+        setClicks([]);
+        setSpotlight(null);
+        setCallout(null);
+        setTargetGlow(null);
+      }
+    };
+
+    window[DEMO_API_NAME] = api;
+    return () => {
+      if (window[DEMO_API_NAME] === api) delete window[DEMO_API_NAME];
+    };
+  }, []);
+
+  const calloutStyle = getDemoCalloutStyle(callout, spotlight);
+
+  return (
+    <div className="demo-overlay" aria-hidden="true">
+      {spotlight && (
+        <div
+          className="demo-spotlight-frame"
+          style={{
+            left: `${spotlight.left}px`,
+            top: `${spotlight.top}px`,
+            width: `${spotlight.width}px`,
+            height: `${spotlight.height}px`,
+            borderRadius: `${spotlight.radius || 10}px`
+          }}
+        />
+      )}
+      {targetGlow && (
+        <div
+          className="demo-target-glow"
+          style={{
+            left: `${targetGlow.left}px`,
+            top: `${targetGlow.top}px`,
+            width: `${targetGlow.width}px`,
+            height: `${targetGlow.height}px`
+          }}
+        />
+      )}
+      {callout && (
+        <div className="demo-callout" style={calloutStyle}>
+          {callout.title && <strong>{callout.title}</strong>}
+          {callout.text && <span>{callout.text}</span>}
+        </div>
+      )}
+      {clicks.map((click) => (
+        <span
+          key={click.id}
+          className="demo-click-ring"
+          style={{ left: `${click.x}px`, top: `${click.y}px` }}
+        />
+      ))}
+      <div
+        className={`demo-pointer ${pointer.visible ? 'is-visible' : ''}${pointer.pressed ? ' is-pressed' : ''}`}
+        style={{
+          left: `${pointer.x}px`,
+          top: `${pointer.y}px`,
+          transitionDuration: `${pointer.duration}ms`
+        }}
+      >
+        <MousePointer2 size={44} aria-hidden="true" />
+        <span className="demo-pointer-dot" />
+      </div>
+    </div>
+  );
+}
+
+function getDemoCalloutStyle(callout, spotlight) {
+  if (!callout) return undefined;
+  const margin = 18;
+  const scale = getDemoOverlayScale();
+  const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth / scale;
+  const viewportHeight = typeof window === 'undefined' ? 720 : window.innerHeight / scale;
+  const width = Math.min(360, Math.max(260, viewportWidth - margin * 2));
+  const requestedHeight = Number(callout.height);
+  const height = Number.isFinite(requestedHeight) ? Math.max(44, requestedHeight) : 104;
+  const placement = callout.placement || 'auto';
+  const requestedGap = Number(callout.gap);
+  const targetGap = Number.isFinite(requestedGap) ? Math.max(0, requestedGap) : margin;
+  let left = (viewportWidth - width) / 2;
+  let top = viewportHeight - height - margin;
+
+  if (spotlight && placement !== 'center') {
+    const prefersRight = placement === 'right' || (placement === 'auto' && spotlight.left + spotlight.width / 2 < viewportWidth / 2);
+    const prefersBottom = placement === 'bottom';
+    const prefersTop = placement === 'top';
+    if (prefersRight) {
+      left = spotlight.left + spotlight.width + targetGap;
+      top = spotlight.top + spotlight.height / 2 - height / 2;
+    } else if (placement === 'left' || placement === 'auto') {
+      left = spotlight.left - width - targetGap;
+      top = spotlight.top + spotlight.height / 2 - height / 2;
+    }
+    if (prefersBottom) {
+      left = spotlight.left + spotlight.width / 2 - width / 2;
+      top = spotlight.top + spotlight.height + targetGap;
+    }
+    if (prefersTop) {
+      left = spotlight.left + spotlight.width / 2 - width / 2;
+      top = spotlight.top - height - targetGap;
+    }
+  } else if (placement === 'center') {
+    top = viewportHeight / 2 - height / 2;
+  }
+
+  return {
+    left: `${clamp(left, margin, viewportWidth - width - margin)}px`,
+    top: `${clamp(top, margin, viewportHeight - height - margin)}px`,
+    maxWidth: `${width}px`
+  };
 }
 
 function PlanWorkspace({
@@ -1588,6 +1912,7 @@ function PlanWorkspace({
                   <input
                     className="text-input compact plan-item-input"
                     value={item}
+                    data-demo-id={`plan-item-${index}`}
                     onChange={(event) => updateItem(index, event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && itemsComplete) goToStep(2, titleRef);
@@ -1612,6 +1937,7 @@ function PlanWorkspace({
               <button
                 className="plan-add-button"
                 type="button"
+                data-demo-id="plan-add-item"
                 onClick={addItem}
                 disabled={items.length >= MAX_PLAN_ITEM_COUNT}
                 title="항목 추가"
@@ -1623,6 +1949,7 @@ function PlanWorkspace({
               <button
                 className="plan-next-button"
                 type="button"
+                data-demo-id="plan-next-items"
                 onClick={() => goToStep(2, titleRef)}
                 onPointerDown={(event) => {
                   if (!itemsComplete) return;
@@ -1657,6 +1984,7 @@ function PlanWorkspace({
               <input
                 className="text-input plan-title-input"
                 value={title}
+                data-demo-id="plan-title"
                 onChange={(event) => updateTitle(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && titleComplete) goToStep(3, planSheetRef);
@@ -1667,6 +1995,7 @@ function PlanWorkspace({
               <button
                 className="plan-next-button"
                 type="button"
+                data-demo-id="plan-next-title"
                 onClick={() => goToStep(3, planSheetRef)}
                 onPointerDown={(event) => {
                   if (!titleComplete) return;
@@ -1780,7 +2109,7 @@ function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = fal
           <tr>
             {headerRow.map((cell, cellIndex) => (
               <th key={cellIndex} className={readOnly ? undefined : 'is-static-cell'}>
-                <span className="manual-table-cell-text"><span>{cell}</span></span>
+                <span className="manual-table-cell-text" data-demo-id={`manual-header-${cellIndex}`}><span>{cell}</span></span>
               </th>
             ))}
           </tr>
@@ -1797,13 +2126,14 @@ function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = fal
                 return (
                   <td key={cellIndex} className={cellClassName || undefined}>
                     {cellReadOnly ? (
-                      <span className="manual-table-cell-text"><span>{cell}</span></span>
+                      <span className="manual-table-cell-text" data-demo-id={`manual-cell-text-${rowIndex}-${cellIndex}`}><span>{cell}</span></span>
                     ) : (
                       <input
                         value={cell}
                         onChange={cellReadOnly ? undefined : (event) => onCellChange(rowIndex, cellIndex, event.target.value)}
                         readOnly={cellReadOnly}
                         aria-label={`${rowIndex + 1}행 ${cellIndex + 1}열`}
+                        data-demo-id={`manual-cell-${rowIndex}-${cellIndex}`}
                       />
                     )}
                   </td>
@@ -1860,6 +2190,50 @@ function getPresentationTotalText(value) {
   return text.replace(/\s*명\s*$/, '').trim() || '(합계)';
 }
 
+function GraphScaleControl({ scale, onConfirm }) {
+  const currentScale = normalizeGraphScale(scale);
+  const canDecrease = currentScale > MIN_GRAPH_SCALE;
+  const canIncrease = currentScale < MAX_GRAPH_SCALE;
+
+  function changeScale(delta) {
+    const nextScale = normalizeGraphScale(currentScale + delta);
+    if (nextScale !== currentScale) onConfirm(nextScale);
+  }
+
+  return (
+    <div className="scale-control">
+      <div className="scale-control-top">
+        <span>눈금 크기</span>
+        <div className="scale-stepper" role="group" aria-label={`눈금 크기 ${currentScale}%`}>
+          <button
+            className="scale-step-button"
+            type="button"
+            data-demo-id="scale-decrease"
+            onClick={() => changeScale(-1)}
+            disabled={!canDecrease}
+            title="눈금 줄이기"
+            aria-label="눈금 줄이기"
+          >
+            <Minus size={16} aria-hidden="true" />
+          </button>
+          <output className="scale-value" aria-live="polite">{currentScale}%</output>
+          <button
+            className="scale-step-button"
+            type="button"
+            data-demo-id="scale-increase"
+            onClick={() => changeScale(1)}
+            disabled={!canIncrease}
+            title="눈금 키우기"
+            aria-label="눈금 키우기"
+          >
+            <Plus size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReportDialog({ plan, table, graph, onClose }) {
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1900,11 +2274,11 @@ function ReportDialog({ plan, table, graph, onClose }) {
     <div className="dialog-backdrop report-backdrop" role="presentation">
       <div className="report-dialog" role="dialog" aria-modal="true" aria-label="최종 보고서">
         <div className="report-toolbar">
-          <button className="icon-text-button report-save-button" type="button" onClick={saveReportImage} disabled={saving}>
+          <button className="icon-text-button report-save-button" type="button" data-demo-id="report-save" onClick={saveReportImage} disabled={saving}>
             <Download size={18} aria-hidden="true" />
             <span>{saving ? '준비 중' : '이미지 저장'}</span>
           </button>
-          <button className="icon-button" type="button" onClick={onClose} title="닫기" aria-label="닫기">
+          <button className="icon-button" type="button" data-demo-id="report-close" onClick={onClose} title="닫기" aria-label="닫기">
             <X size={18} aria-hidden="true" />
           </button>
         </div>
@@ -2070,7 +2444,7 @@ function drawReportImage(context, report) {
     align: 'center',
     fontSize: 76,
     minFontSize: 44,
-    weight: 400,
+    weight: 700,
     fontFamily: REPORT_IMAGE_TITLE_FONT_FAMILY,
     maxLines: 2
   });
@@ -2392,7 +2766,7 @@ function drawCanvasTextBox(context, text, rect, options = {}) {
 
   const maxFontSize = options.fontSize || 24;
   const minFontSize = options.minFontSize || Math.min(14, maxFontSize);
-  const weight = options.weight || 800;
+  const weight = options.weight || 700;
   const align = options.align || 'center';
   const lineHeightRatio = options.lineHeight || 1.18;
   const explicitMaxLines = options.maxLines || null;
@@ -2735,6 +3109,7 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
   const activeGraphLabel = getGraphTypeLabel(activeType);
   const canUndoGraphAction = Array.isArray(activeDrawing.undoStack) && activeDrawing.undoStack.length > 0;
   const presentationSentence = makeGraphPresentationSentence(plan, table);
+  const demoMode = isDemoModeEnabled();
 
   function setGraph(patch) {
     onChange((currentGraph) => {
@@ -2896,6 +3271,17 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
             ]}
           />
 
+          {demoMode && (
+            <GraphScaleControl
+              scale={graphState.scale}
+              onConfirm={(nextScale) => {
+                if (nextScale !== normalizeGraphScale(graphState.scale)) {
+                  setGraph({ scale: nextScale });
+                }
+              }}
+            />
+          )}
+
           <SectionTitle icon={MousePointer2} title="작업 모드" />
           <SegmentedControl
             className="graph-mode-control"
@@ -2911,12 +3297,13 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
 
           {graphState.mode === 'paint' && (
             <div className="swatch-block graph-swatches" aria-label="그래프 색">
-              {GRAPH_COLORS.map((color) => (
+              {GRAPH_COLORS.map((color, index) => (
                 <button
                   key={color}
                   type="button"
                   className={`swatch ${graphState.activeColor === color ? 'is-active' : ''}`}
                   style={{ backgroundColor: color }}
+                  data-demo-id={`graph-color-${index}`}
                   onClick={() => setGraph({ activeColor: color })}
                   title="색 선택"
                   aria-label="색 선택"
@@ -2926,6 +3313,7 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
                 type="button"
                 className={`swatch is-eraser ${graphState.activeColor === GRAPH_ERASER_COLOR ? 'is-active' : ''}`}
                 style={{ backgroundColor: GRAPH_ERASER_COLOR }}
+                data-demo-id="graph-color-eraser"
                 onClick={() => setGraph({ activeColor: GRAPH_ERASER_COLOR })}
                 title="색 지우개"
                 aria-label="색 지우개"
@@ -2936,22 +3324,23 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
           )}
 
           <div className="graph-action-row">
-            <button className="icon-text-button secondary graph-action-button" type="button" onClick={undoGraphAction} disabled={!canUndoGraphAction} title="실행 취소">
+            <button className="icon-text-button secondary graph-action-button" type="button" data-demo-id="graph-undo" onClick={undoGraphAction} disabled={!canUndoGraphAction} title="실행 취소">
               <Undo2 size={17} aria-hidden="true" />
               <span>실행 취소</span>
             </button>
-            <button className="icon-text-button secondary graph-action-button" type="button" onClick={resetGraph} title="그래프 지우기">
+            <button className="icon-text-button secondary graph-action-button" type="button" data-demo-id="graph-reset" onClick={resetGraph} title="그래프 지우기">
               <Eraser size={17} aria-hidden="true" />
               <span>초기화</span>
             </button>
           </div>
 
-          <button className="icon-text-button graph-report-button" type="button" onClick={onOpenReport}>
+          <button className="icon-text-button graph-report-button" type="button" data-demo-id="graph-report" onClick={onOpenReport}>
             <FileText size={18} aria-hidden="true" />
             <span>보고서 이미지</span>
           </button>
           <a
             className="icon-text-button graph-share-button"
+            data-demo-id="graph-share-link"
             href="https://b.tkbell.co.kr/tkboard/woi/1277778/nk4z42ORf8.do?pageSeq=2431822"
             target="_blank"
             rel="noopener noreferrer"
@@ -3160,6 +3549,7 @@ function SentenceBlank({ value, onChange, label, short = false, inputMode }) {
         value={textValue}
         onChange={(event) => onChange(event.target.value)}
         aria-label={label}
+        data-demo-id={`sentence-blank-${label.replace(/\s+/g, '-')}`}
         inputMode={inputMode}
         autoComplete="off"
       />
@@ -3936,6 +4326,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
     <div
       className={`graph-canvas is-${graph.type} mode-${graph.mode}${dividerDragInput === 'touch' ? ' is-divider-touching' : ''}`}
       ref={setGraphCanvasRef}
+      data-demo-id={`graph-canvas-${graph.type}`}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -4511,7 +4902,7 @@ function ShareDialog({ state, activeTab, interpretationAnswers, onClose, onImpor
       <div className="share-dialog" role="dialog" aria-modal="true" aria-label="QR 보내기 받기">
         <div className="section-heading with-action">
           <SectionTitle icon={Share2} title="QR 보내기 / 받기" />
-          <button className="icon-button" type="button" onClick={onClose} title="닫기">
+          <button className="icon-button" type="button" data-demo-id="share-close" onClick={onClose} title="닫기">
             <X size={18} aria-hidden="true" />
           </button>
         </div>
@@ -4709,6 +5100,7 @@ function SegmentedControl({ value, onChange, items, className = '' }) {
             key={item.value}
             type="button"
             className={value === item.value ? 'is-active' : ''}
+            data-demo-id={className ? `${className}-${item.value}` : undefined}
             onClick={() => onChange(item.value)}
           >
             <Icon size={17} aria-hidden="true" />
@@ -4724,8 +5116,12 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function normalizeGraphScale() {
-  return DEFAULT_GRAPH_SCALE;
+function normalizeGraphScale(value, fallback = DEFAULT_GRAPH_SCALE) {
+  if (!isDemoModeEnabled()) return DEFAULT_GRAPH_SCALE;
+  const safeFallback = clamp(Math.round(Number(fallback)) || DEFAULT_GRAPH_SCALE, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+  const scale = Math.round(Number(value));
+  if (!Number.isFinite(scale)) return safeFallback;
+  return clamp(scale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
 }
 
 function makeGraphTicks(scale, includeEnd = false) {
