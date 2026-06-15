@@ -51,6 +51,7 @@ const tableCalloutGap = 6;
 const tableCalloutHeight = 58;
 const graphExplanationMs = 3000;
 const graphStepAfterMs = 360;
+const defaultGraphLabelWidth = 88;
 const barGraphViewBoxHeight = 36;
 const barGraphBox = { left: 8, top: 10, width: 84, height: 14 };
 const pieGraphCircle = { cx: 50, cy: 50, radius: 38 };
@@ -669,10 +670,9 @@ async function addGraphLabel(page, type, location, text, options = {}) {
     text: '',
     x: point.canvas.x,
     y: point.canvas.y,
-    width: options.width || 118,
+    width: options.width || defaultGraphLabelWidth,
     fontSize: options.fontSize || 20,
-    color: options.color || '#1f2d3d',
-    manualSize: true
+    color: options.color || '#1f2d3d'
   };
   graphAnnotationState[type].labels.push(label);
 
@@ -766,16 +766,16 @@ async function addMainGraphLabels(page, type, options = {}) {
 
 async function addNarrowSegmentLabelAndArrow(page, type, options = {}) {
   const outsideLocation = type === 'pie'
-    ? { canvas: { x: 38, y: 28 } }
+    ? { canvas: { x: 38, y: 8 } }
     : { canvas: { x: 88, y: 34 } };
   const arrowStart = type === 'pie'
-    ? { canvas: { x: 43, y: 31 } }
+    ? { canvas: { x: 43, y: 14 } }
     : { canvas: { x: 88, y: 39 } };
   const arrowEnd = type === 'pie'
-    ? { canvas: { x: 46.5, y: 31 } }
+    ? { canvas: { x: 46.5, y: 28 } }
     : { percent: 95, yRatio: 0.5 };
 
-  await addGraphLabel(page, type, outsideLocation, '기타\n(10%)', { ...options, width: 84 });
+  await addGraphLabel(page, type, outsideLocation, '기타\n(10%)', { ...options, width: defaultGraphLabelWidth });
   await clickDemoId(page, 'graph-mode-control-arrow', {
     after: scaledTiming(240, options, 60),
     moveDuration: scaledTiming(180, options, 50),

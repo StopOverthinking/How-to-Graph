@@ -1087,9 +1087,10 @@ function useElementSize() {
 
     function updateSize() {
       const rect = element.getBoundingClientRect();
+      const demoScale = getDemoOverlayScale();
       setSize((currentSize) => {
-        const width = roundLabelMetric(rect.width);
-        const height = roundLabelMetric(rect.height);
+        const width = roundLabelMetric(rect.width / demoScale);
+        const height = roundLabelMetric(rect.height / demoScale);
         return currentSize.width === width && currentSize.height === height
           ? currentSize
           : { width, height };
@@ -3049,6 +3050,12 @@ function fallbackSaveReportImage(dataUrl, fileName) {
     return '이미지를 열지 못했습니다.';
   }
 
+  if (isDemoModeEnabled()) {
+    return downloadDataUrl(dataUrl, fileName)
+      ? '이미지 파일을 저장했습니다.'
+      : '이미지를 열지 못했습니다.';
+  }
+
   const opened = openReportImageWindow(dataUrl, fileName);
   const downloaded = downloadDataUrl(dataUrl, fileName);
   if (opened && downloaded) return '이미지 탭을 열고 다운로드를 시작했습니다.';
@@ -4520,13 +4527,6 @@ function GraphArrowLayer({
   onArrowRemove
 }) {
   const [layerRef, layerSize] = useElementSize();
-  const layerCoordinateScale = getDemoOverlayScale();
-  const layerCoordinateSize = layerCoordinateScale > 1
-    ? {
-      width: layerSize.width / layerCoordinateScale,
-      height: layerSize.height / layerCoordinateScale
-    }
-    : layerSize;
   const savedArrows = sanitizeGraphArrows(arrows);
   const preview = previewArrow && getGraphArrowLength(previewArrow) >= 0.3
     ? { ...normalizeGraphArrow(previewArrow), id: 'preview-arrow', isPreview: true }
@@ -4543,7 +4543,7 @@ function GraphArrowLayer({
           <GraphArrowItem
             key={arrow.id || `${arrow.x1}-${arrow.y1}-${arrow.x2}-${arrow.y2}`}
             arrow={displayArrow}
-            layerSize={layerCoordinateSize}
+            layerSize={layerSize}
             preview={arrow.isPreview}
             visualScale={visualScale}
             interactive={interactive && !arrow.isPreview}
