@@ -1254,12 +1254,6 @@ async function runGraphDemo(page) {
   await addNarrowSegmentLabelAndArrow(page, 'pie', pieFastTiming);
   await page.waitForTimeout(2000);
 
-  await logStep('graph: show qr dialog');
-  await spotlightDemoId(page, 'qr-button', '친구의 그래프를 받아오기', { placement: 'bottom' });
-  await clearDemoSpotlight(page);
-  await clickDemoId(page, 'qr-button', { after: 2000 });
-  await clickDemoId(page, 'share-close', { after: 600 });
-
   await logStep('graph: download report image');
   await spotlightDemoId(page, 'graph-report', '완성 후 보고서 다운로드', { placement: 'right' });
   await clearDemoSpotlight(page);
