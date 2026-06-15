@@ -246,6 +246,16 @@ function recordTypingSounds(text, keyDelay) {
   });
 }
 
+function timingScale(options = {}) {
+  return parsePositiveNumber(options.timingScale, 1);
+}
+
+function scaledTiming(value, options = {}, minimum = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  return Math.max(minimum, Math.round(numeric * timingScale(options)));
+}
+
 function createTwoItemPlanState() {
   const graphDrawing = (type) => ({
     type,
@@ -588,7 +598,7 @@ async function clickGraphLocation(page, type, location, options = {}) {
   await clickClientPoint(page, point, options);
 }
 
-async function setGraphAnnotations(page, type) {
+async function setGraphAnnotations(page, type, options = {}) {
   await page.waitForFunction(
     () => window.HowToGraphAppDemo && typeof window.HowToGraphAppDemo.setGraphAnnotations === 'function',
     undefined,
@@ -600,7 +610,17 @@ async function setGraphAnnotations(page, type) {
     graphType: type,
     annotations: graphAnnotationState[type]
   });
-  await page.waitForTimeout(80);
+  const after = options.after ?? 80;
+  if (after > 0) await page.waitForTimeout(after);
+}
+
+async function waitForLatestGraphLabelText(page, type, text) {
+  const selector = `${graphCanvasSelector(type)} .graph-floating-label`;
+  await page.waitForFunction(({ labelSelector, expectedText }) => {
+    const labels = Array.from(document.querySelectorAll(labelSelector));
+    const latest = labels[labels.length - 1];
+    return latest && latest.value === expectedText;
+  }, { labelSelector: selector, expectedText: text }, { timeout: 4000 });
 }
 
 async function typeLatestGraphLabel(page, type, text, options = {}) {
@@ -638,30 +658,57 @@ async function typeGraphLabelLocator(page, label, text, options = {}) {
 async function addGraphLabel(page, type, location, text, options = {}) {
   await logStep(`graph: add label ${type} "${text.replace(/\n/g, ' / ')}"`);
   const point = await getGraphLocationPoints(page, type, location);
-  await animateClientPointClick(page, point.client, { after: 80, moveDuration: options.moveDuration ?? 180 });
-  const keyDelay = options.delay ?? 38;
-  recordTypingSounds(text, keyDelay);
-  await wait(Math.max(160, Array.from(text).filter((character) => character.trim()).length * keyDelay));
-  graphAnnotationState[type].labels.push({
+  await animateClientPointClick(page, point.client, {
+    after: scaledTiming(80, options, 20),
+    moveDuration: scaledTiming(options.moveDuration ?? 180, options, 40),
+    clickDuration: scaledTiming(options.clickDuration ?? 140, options, 40)
+  });
+  const keyDelay = scaledTiming(options.delay ?? 64, options, 22);
+  const label = {
     id: `${type}-label-${graphAnnotationState[type].labels.length + 1}`,
-    text,
+    text: '',
     x: point.canvas.x,
     y: point.canvas.y,
     width: options.width || 118,
     fontSize: options.fontSize || 20,
-    color: options.color || '#1f2d3d'
-  });
-  await setGraphAnnotations(page, type);
-  await page.waitForTimeout(options.after ?? 220);
+    color: options.color || '#1f2d3d',
+    manualSize: true
+  };
+  graphAnnotationState[type].labels.push(label);
+
+  let current = '';
+  for (const character of Array.from(text)) {
+    current += character;
+    label.text = current;
+    if (character.trim()) recordSound('typing');
+    await setGraphAnnotations(page, type, { after: 0 });
+    await waitForLatestGraphLabelText(page, type, current);
+    await wait(keyDelay);
+  }
+
+  await setGraphAnnotations(page, type, { after: 0 });
+  await page.waitForTimeout(scaledTiming(options.after ?? 220, options, 40));
 }
 
 async function dragGraphArrow(page, type, startLocation, endLocation, options = {}) {
   const start = await getGraphLocationPoints(page, type, startLocation);
   const end = await getGraphLocationPoints(page, type, endLocation);
-  await callDemo(page, 'movePointer', { x: start.client.x, y: start.client.y, duration: options.moveDuration ?? 220 });
+  await callDemo(page, 'movePointer', {
+    x: start.client.x,
+    y: start.client.y,
+    duration: scaledTiming(options.moveDuration ?? 220, options, 50)
+  });
   recordSound('click');
-  await callDemo(page, 'clickAt', { x: start.client.x, y: start.client.y, duration: 120 });
-  await callDemo(page, 'movePointer', { x: end.client.x, y: end.client.y, duration: options.dragDuration ?? 520 });
+  await callDemo(page, 'clickAt', {
+    x: start.client.x,
+    y: start.client.y,
+    duration: scaledTiming(options.clickDuration ?? 120, options, 40)
+  });
+  await callDemo(page, 'movePointer', {
+    x: end.client.x,
+    y: end.client.y,
+    duration: scaledTiming(options.dragDuration ?? 520, options, 90)
+  });
   graphAnnotationState[type].arrows.push({
     id: `${type}-arrow-${graphAnnotationState[type].arrows.length + 1}`,
     x1: start.canvas.x,
@@ -670,55 +717,71 @@ async function dragGraphArrow(page, type, startLocation, endLocation, options = 
     y2: end.canvas.y
   });
   await setGraphAnnotations(page, type);
-  await page.waitForTimeout(options.after ?? 420);
+  await page.waitForTimeout(scaledTiming(options.after ?? 420, options, 80));
 }
 
-async function drawGraphDividers(page, type) {
+async function drawGraphDividers(page, type, options = {}) {
   for (const divider of graphDividers) {
     await clickGraphLocation(page, type, {
       percent: divider,
       radius: pieGraphCircle.radius * 0.78,
       yRatio: 0.5
+    }, {
+      after: scaledTiming(graphStepAfterMs, options, 80),
+      moveDuration: scaledTiming(220, options, 60),
+      clickDuration: scaledTiming(160, options, 45)
     });
   }
 }
 
-async function paintGraphSegments(page, type) {
+async function paintGraphSegments(page, type, options = {}) {
   for (const segment of graphSegments) {
-    await clickDemoId(page, `graph-color-${segment.colorIndex}`, { after: 100, moveDuration: 120, clickDuration: 80 });
+    await clickDemoId(page, `graph-color-${segment.colorIndex}`, {
+      after: scaledTiming(100, options, 35),
+      moveDuration: scaledTiming(120, options, 40),
+      clickDuration: scaledTiming(80, options, 35)
+    });
     await clickGraphLocation(page, type, {
       percent: (segment.start + segment.end) / 2,
       radius: pieGraphCircle.radius * 0.56,
       yRatio: 0.5
-    }, { after: 220, moveDuration: 180 });
+    }, {
+      after: scaledTiming(220, options, 70),
+      moveDuration: scaledTiming(180, options, 50),
+      clickDuration: scaledTiming(140, options, 40)
+    });
   }
 }
 
-async function addMainGraphLabels(page, type) {
+async function addMainGraphLabels(page, type, options = {}) {
   const mainSegments = graphSegments.slice(0, 3);
   for (const segment of mainSegments) {
     await addGraphLabel(page, type, {
       percent: (segment.start + segment.end) / 2,
       radius: type === 'pie' ? pieGraphCircle.radius * 0.42 : undefined,
       yRatio: 0.46
-    }, `${segment.label}\n(${segment.percent}%)`);
+    }, `${segment.label}\n(${segment.percent}%)`, options);
   }
 }
 
-async function addNarrowSegmentLabelAndArrow(page, type) {
+async function addNarrowSegmentLabelAndArrow(page, type, options = {}) {
   const outsideLocation = type === 'pie'
-    ? { canvas: { x: 47, y: 13 } }
+    ? { canvas: { x: 38, y: 28 } }
     : { canvas: { x: 88, y: 34 } };
   const arrowStart = type === 'pie'
-    ? { canvas: { x: 47, y: 19 } }
+    ? { canvas: { x: 43, y: 31 } }
     : { canvas: { x: 88, y: 39 } };
   const arrowEnd = type === 'pie'
-    ? { percent: 95, radius: pieGraphCircle.radius * 0.55 }
+    ? { canvas: { x: 46.5, y: 31 } }
     : { percent: 95, yRatio: 0.5 };
 
-  await addGraphLabel(page, type, outsideLocation, '기타\n(10%)', { width: 84 });
-  await clickDemoId(page, 'graph-mode-control-arrow', { after: 240 });
-  await dragGraphArrow(page, type, arrowStart, arrowEnd);
+  await addGraphLabel(page, type, outsideLocation, '기타\n(10%)', { ...options, width: 84 });
+  await clickDemoId(page, 'graph-mode-control-arrow', {
+    after: scaledTiming(240, options, 60),
+    moveDuration: scaledTiming(180, options, 50),
+    clickDuration: scaledTiming(120, options, 40)
+  });
+  await dragGraphArrow(page, type, arrowStart, arrowEnd, options);
 }
 
 async function saveReportDownload(page) {
@@ -1090,6 +1153,7 @@ async function runTableDemo(page) {
 
 async function runGraphDemo(page) {
   resetGraphAnnotationState();
+  const pieFastTiming = { timingScale: 0.5 };
   await logStep('graph: seed and open table tab');
   await seedBeverageTableState(page);
   await page.goto(`${seededDemoUrl}&demoTab=table`, { waitUntil: 'networkidle' });
@@ -1135,14 +1199,30 @@ async function runGraphDemo(page) {
   await addNarrowSegmentLabelAndArrow(page, 'bar');
 
   await logStep('graph: draw pie');
-  await clickDemoId(page, 'graph-type-control-pie', { after: 900 });
-  await clickDemoId(page, 'graph-mode-control-divide', { after: 240 });
-  await drawGraphDividers(page, 'pie');
-  await clickDemoId(page, 'graph-mode-control-paint', { after: 260 });
-  await paintGraphSegments(page, 'pie');
-  await clickDemoId(page, 'graph-mode-control-text', { after: 260 });
-  await addMainGraphLabels(page, 'pie');
-  await addNarrowSegmentLabelAndArrow(page, 'pie');
+  await clickDemoId(page, 'graph-type-control-pie', {
+    after: scaledTiming(900, pieFastTiming, 180),
+    moveDuration: scaledTiming(180, pieFastTiming, 50),
+    clickDuration: scaledTiming(120, pieFastTiming, 40)
+  });
+  await clickDemoId(page, 'graph-mode-control-divide', {
+    after: scaledTiming(240, pieFastTiming, 60),
+    moveDuration: scaledTiming(180, pieFastTiming, 50),
+    clickDuration: scaledTiming(120, pieFastTiming, 40)
+  });
+  await drawGraphDividers(page, 'pie', pieFastTiming);
+  await clickDemoId(page, 'graph-mode-control-paint', {
+    after: scaledTiming(260, pieFastTiming, 70),
+    moveDuration: scaledTiming(180, pieFastTiming, 50),
+    clickDuration: scaledTiming(120, pieFastTiming, 40)
+  });
+  await paintGraphSegments(page, 'pie', pieFastTiming);
+  await clickDemoId(page, 'graph-mode-control-text', {
+    after: scaledTiming(260, pieFastTiming, 70),
+    moveDuration: scaledTiming(180, pieFastTiming, 50),
+    clickDuration: scaledTiming(120, pieFastTiming, 40)
+  });
+  await addMainGraphLabels(page, 'pie', pieFastTiming);
+  await addNarrowSegmentLabelAndArrow(page, 'pie', pieFastTiming);
   await page.waitForTimeout(2000);
 
   await logStep('graph: show qr dialog');
