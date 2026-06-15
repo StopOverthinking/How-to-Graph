@@ -254,6 +254,14 @@ function normalizeDemoGraphLabelText(text) {
     .replace(/\n+$/g, '');
 }
 
+function assertNoTrailingGraphLabelNewline(type) {
+  const graphState = graphAnnotationState[type];
+  const badLabel = graphState.labels.find((label) => /[\r\n]$/.test(String(label.text || '')));
+  if (badLabel) {
+    throw new Error(`Graph demo label has a trailing newline: ${type} ${badLabel.id}`);
+  }
+}
+
 function timingScale(options = {}) {
   return parsePositiveNumber(options.timingScale, 1);
 }
@@ -670,6 +678,9 @@ async function typeGraphLabelLocator(page, label, text, options = {}) {
 
 async function addGraphLabel(page, type, location, text, options = {}) {
   const labelText = normalizeDemoGraphLabelText(text);
+  if (/[\r\n]$/.test(labelText)) {
+    throw new Error(`Graph demo label text still ends with a newline: ${labelText}`);
+  }
   await logStep(`graph: add label ${type} "${labelText.replace(/\n/g, ' / ')}"`);
   const point = await getGraphLocationPoints(page, type, location);
   await animateClientPointClick(page, point.client, {
@@ -704,6 +715,7 @@ async function addGraphLabel(page, type, location, text, options = {}) {
   }
 
   await setGraphAnnotations(page, type, { after: 0 });
+  assertNoTrailingGraphLabelNewline(type);
   await page.waitForTimeout(scaledTiming(options.after ?? 220, options, 40));
 }
 
@@ -784,13 +796,13 @@ async function addMainGraphLabels(page, type, options = {}) {
 async function addNarrowSegmentLabelAndArrow(page, type, options = {}) {
   const outsideLocation = type === 'pie'
     ? { canvas: { x: 38, y: 8 } }
-    : { canvas: { x: 88, y: 34 } };
+    : { canvas: { x: 96, y: 25 } };
   const arrowStart = type === 'pie'
     ? { canvas: { x: 43, y: 14 } }
-    : { canvas: { x: 88, y: 39 } };
+    : { canvas: { x: 94, y: 30 } };
   const arrowEnd = type === 'pie'
     ? { canvas: { x: 46.5, y: 28 } }
-    : { percent: 95, yRatio: 0.5 };
+    : { percent: 96, yRatio: 0.5 };
 
   await addGraphLabel(page, type, outsideLocation, '기타\n(10%)', { ...options, width: defaultGraphLabelWidth });
   await clickDemoId(page, 'graph-mode-control-arrow', {
