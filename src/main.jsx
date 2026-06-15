@@ -1354,7 +1354,8 @@ function App() {
               y: label.y,
               width: label.width,
               fontSize: label.fontSize,
-              color: label.color
+              color: label.color,
+              manualSize: label.manualSize
             }))
             : drawing.labels;
           const arrows = Array.isArray(annotations.arrows)
@@ -4519,6 +4520,13 @@ function GraphArrowLayer({
   onArrowRemove
 }) {
   const [layerRef, layerSize] = useElementSize();
+  const layerCoordinateScale = getDemoOverlayScale();
+  const layerCoordinateSize = layerCoordinateScale > 1
+    ? {
+      width: layerSize.width / layerCoordinateScale,
+      height: layerSize.height / layerCoordinateScale
+    }
+    : layerSize;
   const savedArrows = sanitizeGraphArrows(arrows);
   const preview = previewArrow && getGraphArrowLength(previewArrow) >= 0.3
     ? { ...normalizeGraphArrow(previewArrow), id: 'preview-arrow', isPreview: true }
@@ -4535,7 +4543,7 @@ function GraphArrowLayer({
           <GraphArrowItem
             key={arrow.id || `${arrow.x1}-${arrow.y1}-${arrow.x2}-${arrow.y2}`}
             arrow={displayArrow}
-            layerSize={layerSize}
+            layerSize={layerCoordinateSize}
             preview={arrow.isPreview}
             visualScale={visualScale}
             interactive={interactive && !arrow.isPreview}
