@@ -247,6 +247,13 @@ function recordTypingSounds(text, keyDelay) {
   });
 }
 
+function normalizeDemoGraphLabelText(text) {
+  return String(text ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n+$/g, '');
+}
+
 function timingScale(options = {}) {
   return parsePositiveNumber(options.timingScale, 1);
 }
@@ -632,12 +639,17 @@ async function typeLatestGraphLabel(page, type, text, options = {}) {
 }
 
 async function typeGraphLabelLocator(page, label, text, options = {}) {
-  await logStep(`graph: type label start "${text.replace(/\n/g, ' / ')}"`);
+  const labelText = normalizeDemoGraphLabelText(text);
+  await logStep(`graph: type label start "${labelText.replace(/\n/g, ' / ')}"`);
   const keyDelay = options.delay ?? 38;
-  recordTypingSounds(text, keyDelay);
+  recordTypingSounds(labelText, keyDelay);
   let current = '';
-  for (const character of Array.from(text)) {
+  for (const character of Array.from(labelText)) {
     current += character;
+    if (current.endsWith('\n')) {
+      await wait(keyDelay);
+      continue;
+    }
     await label.evaluate((element, value) => {
       const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
       const previousValue = element.value;
@@ -651,13 +663,14 @@ async function typeGraphLabelLocator(page, label, text, options = {}) {
 
   await page.waitForTimeout(30);
   const typedValue = await label.evaluate((element) => element.value);
-  if (typedValue !== text) throw new Error(`Graph label typing failed: expected "${text}", got "${typedValue}".`);
-  await logStep(`graph: type label done "${text.replace(/\n/g, ' / ')}"`);
+  if (typedValue !== labelText) throw new Error(`Graph label typing failed: expected "${labelText}", got "${typedValue}".`);
+  await logStep(`graph: type label done "${labelText.replace(/\n/g, ' / ')}"`);
   await page.waitForTimeout(options.after ?? 240);
 }
 
 async function addGraphLabel(page, type, location, text, options = {}) {
-  await logStep(`graph: add label ${type} "${text.replace(/\n/g, ' / ')}"`);
+  const labelText = normalizeDemoGraphLabelText(text);
+  await logStep(`graph: add label ${type} "${labelText.replace(/\n/g, ' / ')}"`);
   const point = await getGraphLocationPoints(page, type, location);
   await animateClientPointClick(page, point.client, {
     after: scaledTiming(80, options, 20),
@@ -677,8 +690,12 @@ async function addGraphLabel(page, type, location, text, options = {}) {
   graphAnnotationState[type].labels.push(label);
 
   let current = '';
-  for (const character of Array.from(text)) {
+  for (const character of Array.from(labelText)) {
     current += character;
+    if (current.endsWith('\n')) {
+      await wait(keyDelay);
+      continue;
+    }
     label.text = current;
     if (character.trim()) recordSound('typing');
     await setGraphAnnotations(page, type, { after: 0 });
