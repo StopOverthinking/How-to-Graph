@@ -169,6 +169,16 @@ const SHARE_SCOPE_LABELS = {
   interpret: '해석하기',
   full: '전체'
 };
+const SELF_ASSESSMENT_QUESTIONS = [
+  { id: 'percentageTable', text: '자료를 보고 백분율을 올바르게 구해 표를 만들었나요?' },
+  { id: 'graphs', text: '표를 보고 띠그래프와 원그래프를 올바르게 그렸나요?' },
+  { id: 'facts', text: '그래프를 보고 알 수 있는 사실을 올바르게 찾았나요?' }
+];
+const SELF_ASSESSMENT_OPTIONS = [
+  { id: 'good', label: '잘함' },
+  { id: 'normal', label: '보통' },
+  { id: 'needsPractice', label: '노력 요함' }
+];
 const SHARE_GRAPH_TYPE_CODES = { bar: 'b', pie: 'p' };
 const SHARE_GRAPH_TYPES_BY_CODE = { b: 'bar', p: 'pie' };
 const BAR_GRAPH_VIEWBOX = { width: 100, height: 36 };
@@ -202,6 +212,13 @@ let idSeed = 1;
 function makeId(prefix) {
   idSeed += 1;
   return `${prefix}-${Date.now()}-${idSeed}`;
+}
+
+function createDefaultSelfAssessmentAnswers() {
+  return SELF_ASSESSMENT_QUESTIONS.reduce((answers, question) => ({
+    ...answers,
+    [question.id]: ''
+  }), {});
 }
 
 function createDefaultGraphDrawing(type) {
@@ -1073,6 +1090,8 @@ function App() {
   const [toast, setToast] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [selfAssessmentOpen, setSelfAssessmentOpen] = useState(false);
+  const [selfAssessmentAnswers, setSelfAssessmentAnswers] = useState(createDefaultSelfAssessmentAnswers);
   const [interpretationAnswers, setInterpretationAnswers] = useState(() => {
     try {
       const hashAnswers = readInterpretationFromHash();
@@ -1146,6 +1165,24 @@ function App() {
     setInterpretationAnswers((previous) => normalizeInterpretationAnswers({ ...previous, ...patch }));
   }
 
+  function setSelfAssessmentAnswer(questionId, value) {
+    setSelfAssessmentAnswers((previous) => ({
+      ...previous,
+      [questionId]: value
+    }));
+  }
+
+  function openSelfAssessment() {
+    setShareOpen(false);
+    setReportOpen(false);
+    setSelfAssessmentOpen(true);
+  }
+
+  function closeSelfAssessment() {
+    setActiveTab('interpret');
+    setSelfAssessmentOpen(false);
+  }
+
   function applyImportedPayload(payload) {
     if (payload.scope === 'interpret') {
       setInterpretationAnswers(normalizeInterpretationAnswers(payload.interpretation));
@@ -1159,6 +1196,22 @@ function App() {
     }
     setToast(`${getSharePayloadLabel(payload)} 자료를 적용했습니다.`);
     window.setTimeout(() => setToast(''), 2200);
+  }
+
+  if (selfAssessmentOpen) {
+    return (
+      <div className="app-shell is-self-assessment-shell">
+        <main className="finish-stage">
+          <SelfAssessmentScreen
+            answers={selfAssessmentAnswers}
+            onAnswerChange={setSelfAssessmentAnswer}
+            onBack={closeSelfAssessment}
+          />
+        </main>
+
+        {toast && <div className="toast" role="status">{toast}</div>}
+      </div>
+    );
   }
 
   return (
@@ -1218,6 +1271,7 @@ function App() {
               graph={state.graph}
               answers={interpretationAnswers}
               onAnswerChange={patchInterpretationAnswers}
+              onFinish={openSelfAssessment}
             />
           )}
         </section>
@@ -2846,7 +2900,7 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
   );
 }
 
-function InterpretationWorkspace({ graph, answers, onAnswerChange }) {
+function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
   const currentAnswers = normalizeInterpretationAnswers(answers);
 
   function setAnswer(key, value) {
@@ -2965,6 +3019,74 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange }) {
             <span>적습니다.</span>
           </li>
         </ol>
+
+        <div className="interpret-finish-row">
+          <button className="icon-text-button interpret-finish-button" type="button" onClick={onFinish}>
+            <ChevronRight size={18} aria-hidden="true" />
+            <span>수업 마무리하기</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function SelfAssessmentScreen({ answers, onAnswerChange, onBack }) {
+  const currentAnswers = {
+    ...createDefaultSelfAssessmentAnswers(),
+    ...(answers && typeof answers === 'object' ? answers : {})
+  };
+
+  return (
+    <div className="self-assessment-screen">
+      <div className="self-assessment-actions">
+        <button className="icon-text-button secondary self-assessment-back-button" type="button" onClick={onBack}>
+          <ChevronLeft size={18} aria-hidden="true" />
+          <span>이전</span>
+        </button>
+      </div>
+
+      <form className="self-assessment-form" aria-label="수업 마무리 자기평가" onSubmit={(event) => event.preventDefault()}>
+        <table className="self-assessment-table">
+          <colgroup>
+            <col className="self-assessment-question-col" />
+            {SELF_ASSESSMENT_OPTIONS.map((option) => (
+              <col key={option.id} className="self-assessment-choice-col" />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col">질문</th>
+              {SELF_ASSESSMENT_OPTIONS.map((option) => (
+                <th key={option.id} scope="col">{option.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {SELF_ASSESSMENT_QUESTIONS.map((question, index) => (
+              <tr key={question.id}>
+                <th scope="row">
+                  <span className="self-assessment-number">{index + 1}</span>
+                  <span>{question.text}</span>
+                </th>
+                {SELF_ASSESSMENT_OPTIONS.map((option) => (
+                  <td key={option.id}>
+                    <label className={`self-assessment-option ${currentAnswers[question.id] === option.id ? 'is-selected' : ''}`}>
+                      <input
+                        type="radio"
+                        name={`self-assessment-${question.id}`}
+                        value={option.id}
+                        checked={currentAnswers[question.id] === option.id}
+                        onChange={() => onAnswerChange(question.id, option.id)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </form>
     </div>
   );
