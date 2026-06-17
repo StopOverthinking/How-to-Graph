@@ -20,7 +20,6 @@ import {
   FileText,
   Maximize2,
   Megaphone,
-  Minus,
   MousePointer2,
   PaintBucket,
   PenLine,
@@ -128,6 +127,7 @@ const LABEL_LINE_HEIGHT = 1.18;
 const LABEL_BOX_VERTICAL_PADDING_EM = 0.75;
 const LABEL_BOX_VERTICAL_GUARD_PX = 2;
 const LABEL_SELECTION_INSET_EM = 0.3;
+const LABEL_PREVENT_SCROLL_SAFE_VIEWPORT_RATIO = 0.58;
 const DEFAULT_LABEL_FONT_SIZE = 20;
 const MIN_LABEL_FONT_SIZE = 12;
 const MAX_LABEL_FONT_SIZE = 34;
@@ -135,14 +135,12 @@ const COUNT_ROW_LABEL = '인원(명)';
 const PERCENTAGE_ROW_LABEL = '백분율(%)';
 const TOTAL_COLUMN_LABEL = '합계';
 const DEFAULT_GRAPH_SCALE = 5;
-const MIN_GRAPH_SCALE = 1;
-const MAX_GRAPH_SCALE = 20;
 const DIVIDER_DRAG_BAR_TOLERANCE = 8;
 const DIVIDER_DRAG_PIE_TOLERANCE = 10;
 const SHARE_VERSION = 4;
 const LEGACY_SHARE_VERSION = 2;
 const PREVIOUS_SCOPED_SHARE_VERSION = 3;
-const PREVIOUS_DEFAULT_GRAPH_SCALE = 10;
+const QR_SHARING_ENABLED = false;
 const SHARE_DEFAULT_TOKEN = '0';
 const SHARE_CHUNK_PREFIX = 'how-to-graph-share-parts:';
 const SHARE_CHUNK_SIZES = [1500, 1200, 950, 720, 540, 400, 300, 220, 160, 110, 72, 44, 24, 12, 6, 3, 1];
@@ -201,6 +199,8 @@ const REPORT_IMAGE_HEIGHT = 1200;
 const REPORT_IMAGE_MARGIN = 72;
 const REPORT_IMAGE_GRAPH_OVERLAP = 38;
 const REPORT_IMAGE_LOGICAL_WIDTH = 760;
+const REPORT_GRAPH_CONTENT_PADDING = 6;
+const REPORT_GRAPH_ARROW_PADDING_UNITS = 6;
 const DISPLAY_GRAPH_MIN_VISUAL_SCALE = 0.34;
 const DISPLAY_GRAPH_MAX_VISUAL_SCALE = 1;
 const REPORT_IMAGE_FONT_FAMILY = 'Inter, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif';
@@ -807,16 +807,153 @@ function getSourceGraphSvgRect(type) {
   });
 }
 
-function getReportPreviewGraphSvgRect(type, frameSize) {
+function getReportPreviewGraphSvgRect(type, frameSize, graph = null) {
+  if (graph) {
+    return getAdaptiveReportGraphSvgRect(type, frameSize, REPORT_GRAPH_DISPLAY_WIDTH_RATIOS[type], graph, {
+      maxHeightInset: GRAPH_DISPLAY_MAX_HEIGHT_INSET
+    });
+  }
   return getGraphSvgRectInFrame(type, frameSize, REPORT_GRAPH_DISPLAY_WIDTH_RATIOS[type], {
     maxHeightInset: GRAPH_DISPLAY_MAX_HEIGHT_INSET
   });
 }
 
-function getReportImageGraphSvgRect(type, frameSize) {
+function getReportImageGraphSvgRect(type, frameSize, graph = null) {
+  if (graph) {
+    return getAdaptiveReportGraphSvgRect(type, frameSize, REPORT_GRAPH_DISPLAY_WIDTH_RATIOS[type], graph, {
+      maxHeightRatio: type === 'pie' ? 0.92 : 0.78
+    });
+  }
   return getGraphSvgRectInFrame(type, frameSize, REPORT_GRAPH_DISPLAY_WIDTH_RATIOS[type], {
     maxHeightRatio: type === 'pie' ? 0.92 : 0.78
   });
+}
+
+function getGraphViewBoxBounds(type) {
+  const viewBox = getGraphViewBoxSize(type);
+  return {
+    left: 0,
+    top: 0,
+    right: viewBox.width,
+    bottom: viewBox.height
+  };
+}
+
+function expandGraphContentBounds(bounds, left, top, right, bottom) {
+  if (![left, top, right, bottom].every(Number.isFinite)) return bounds;
+  return {
+    left: Math.min(bounds.left, left),
+    top: Math.min(bounds.top, top),
+    right: Math.max(bounds.right, right),
+    bottom: Math.max(bounds.bottom, bottom)
+  };
+}
+
+function getGraphPointInViewBox(type, xPercent, yPercent) {
+  const sourceFrame = getCanonicalGraphEditFrame();
+  const sourceSvgRect = getSourceGraphSvgRect(type);
+  const viewBox = getGraphViewBoxSize(type);
+  if (!sourceSvgRect.width || !sourceSvgRect.height) {
+    return {
+      x: viewBox.width * (normalizeCanvasPercent(xPercent) / 100),
+      y: viewBox.height * (normalizeCanvasPercent(yPercent) / 100)
+    };
+  }
+
+  const sourceX = sourceFrame.width * (normalizeCanvasPercent(xPercent) / 100);
+  const sourceY = sourceFrame.height * (normalizeCanvasPercent(yPercent) / 100);
+  return {
+    x: ((sourceX - sourceSvgRect.x) / sourceSvgRect.width) * viewBox.width,
+    y: ((sourceY - sourceSvgRect.y) / sourceSvgRect.height) * viewBox.height
+  };
+}
+
+function getGraphReportContentBounds(graph, type) {
+  const sourceFrame = getCanonicalGraphEditFrame();
+  const sourceSvgRect = getSourceGraphSvgRect(type);
+  const viewBox = getGraphViewBoxSize(type);
+  let bounds = getGraphViewBoxBounds(type);
+  if (!sourceSvgRect.width || !sourceSvgRect.height) return bounds;
+
+  const unitPerSourceX = viewBox.width / sourceSvgRect.width;
+  const unitPerSourceY = viewBox.height / sourceSvgRect.height;
+  const labels = Array.isArray(graph && graph.labels) ? graph.labels : [];
+  labels.forEach((rawLabel) => {
+    const label = normalizeGraphLabel(rawLabel);
+    if (!label.text.trim()) return;
+
+    const sourceWidth = getSafeLabelWidth(label.text, label.fontSize, label.width, null, getCanvasLabelMaxWidth(sourceFrame));
+    const sourceHeight = getLabelBoxHeightForText(label.text, label.fontSize, sourceWidth, null);
+    const point = getGraphPointInViewBox(type, label.x, label.y);
+    const halfWidth = (sourceWidth * unitPerSourceX) / 2;
+    const halfHeight = (sourceHeight * unitPerSourceY) / 2;
+    bounds = expandGraphContentBounds(
+      bounds,
+      point.x - halfWidth,
+      point.y - halfHeight,
+      point.x + halfWidth,
+      point.y + halfHeight
+    );
+  });
+
+  sanitizeGraphArrows(graph && graph.arrows).forEach((arrow) => {
+    [getGraphPointInViewBox(type, arrow.x1, arrow.y1), getGraphPointInViewBox(type, arrow.x2, arrow.y2)]
+      .forEach((point) => {
+        bounds = expandGraphContentBounds(
+          bounds,
+          point.x - REPORT_GRAPH_ARROW_PADDING_UNITS,
+          point.y - REPORT_GRAPH_ARROW_PADDING_UNITS,
+          point.x + REPORT_GRAPH_ARROW_PADDING_UNITS,
+          point.y + REPORT_GRAPH_ARROW_PADDING_UNITS
+        );
+      });
+  });
+
+  return bounds;
+}
+
+function getAdaptiveReportGraphSvgRect(type, frameSize, widthRatio, graph, options = {}) {
+  const baseRect = getGraphSvgRectInFrame(type, frameSize, widthRatio, options);
+  const frameWidth = Number(frameSize && frameSize.width);
+  const frameHeight = Number(frameSize && frameSize.height);
+  const viewBox = getGraphViewBoxSize(type);
+  if (
+    !baseRect.width
+    || !baseRect.height
+    || !Number.isFinite(frameWidth)
+    || !Number.isFinite(frameHeight)
+    || frameWidth <= 0
+    || frameHeight <= 0
+    || !viewBox.width
+    || !viewBox.height
+  ) {
+    return baseRect;
+  }
+
+  const bounds = getGraphReportContentBounds(graph, type);
+  const contentWidth = Math.max(1, bounds.right - bounds.left);
+  const contentHeight = Math.max(1, bounds.bottom - bounds.top);
+  const padding = Math.max(0, Number.isFinite(Number(options.contentPadding))
+    ? Number(options.contentPadding)
+    : REPORT_GRAPH_CONTENT_PADDING);
+  const availableWidth = Math.max(1, frameWidth - padding * 2);
+  const availableHeight = Math.max(1, frameHeight - padding * 2);
+  const baseScale = baseRect.width / viewBox.width;
+  const scale = Math.min(
+    baseScale,
+    availableWidth / contentWidth,
+    availableHeight / contentHeight
+  );
+  if (!Number.isFinite(scale) || scale <= 0) return baseRect;
+
+  const renderedContentWidth = contentWidth * scale;
+  const renderedContentHeight = contentHeight * scale;
+  return {
+    x: padding + (availableWidth - renderedContentWidth) / 2 - bounds.left * scale,
+    y: padding + (availableHeight - renderedContentHeight) / 2 - bounds.top * scale,
+    width: viewBox.width * scale,
+    height: viewBox.height * scale
+  };
 }
 
 function projectGraphCanvasPoint(type, xPercent, yPercent, targetFrameSize, targetSvgRect) {
@@ -1232,9 +1369,11 @@ function App() {
               </button>
             );
           })}
-          <button className="icon-button qr-nav-button" type="button" onClick={() => setShareOpen(true)} title="QR 보내기 / 받기" aria-label="QR 보내기 / 받기">
-            <QrCode size={21} aria-hidden="true" />
-          </button>
+          {QR_SHARING_ENABLED && (
+            <button className="icon-button qr-nav-button" type="button" onClick={() => setShareOpen(true)} title="QR 보내기 / 받기" aria-label="QR 보내기 / 받기">
+              <QrCode size={21} aria-hidden="true" />
+            </button>
+          )}
         </nav>
       </div>
 
@@ -1277,7 +1416,7 @@ function App() {
         </section>
       </main>
 
-      {shareOpen && (
+      {QR_SHARING_ENABLED && shareOpen && (
         <ShareDialog
           state={state}
           activeTab={activeTab}
@@ -1714,48 +1853,6 @@ function getPresentationTotalText(value) {
   return text.replace(/\s*명\s*$/, '').trim() || '(합계)';
 }
 
-function GraphScaleControl({ scale, onConfirm }) {
-  const currentScale = normalizeGraphScale(scale);
-  const canDecrease = currentScale > MIN_GRAPH_SCALE;
-  const canIncrease = currentScale < MAX_GRAPH_SCALE;
-
-  function changeScale(delta) {
-    const nextScale = normalizeGraphScale(currentScale + delta);
-    if (nextScale !== currentScale) onConfirm(nextScale);
-  }
-
-  return (
-    <div className="scale-control">
-      <div className="scale-control-top">
-        <span>눈금 크기</span>
-        <div className="scale-stepper" role="group" aria-label={`눈금 크기 ${currentScale}%`}>
-          <button
-            className="scale-step-button"
-            type="button"
-            onClick={() => changeScale(-1)}
-            disabled={!canDecrease}
-            title="눈금 줄이기"
-            aria-label="눈금 줄이기"
-          >
-            <Minus size={16} aria-hidden="true" />
-          </button>
-          <output className="scale-value" aria-live="polite">{currentScale}%</output>
-          <button
-            className="scale-step-button"
-            type="button"
-            onClick={() => changeScale(1)}
-            disabled={!canIncrease}
-            title="눈금 키우기"
-            aria-label="눈금 키우기"
-          >
-            <Plus size={16} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ReportDialog({ plan, table, graph, onClose }) {
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1851,14 +1948,14 @@ function ReportGraphCanvas({ graph, type }) {
   const [frameRef, frameSize] = useElementSize();
   const renderGraph = getRenderableGraph(graph, type);
   const segments = getSegments(renderGraph.dividers);
-  const targetSvgRect = getReportPreviewGraphSvgRect(type, frameSize);
+  const targetSvgRect = getReportPreviewGraphSvgRect(type, frameSize, renderGraph);
   const visualScale = getReportGraphObjectScale(type, frameSize, targetSvgRect);
   const sourceFrameSize = getCanonicalGraphEditFrame();
   const projectReportPoint = (x, y) => projectGraphCanvasPointPercent(type, x, y, frameSize, targetSvgRect);
 
   return (
     <div className={`report-graph-canvas is-${type}`} ref={frameRef} aria-label={getGraphTypeLabel(type)}>
-      <SingleGraphDisplay graph={renderGraph} segments={segments} />
+      <SingleGraphDisplay graph={renderGraph} segments={segments} svgRect={targetSvgRect} />
       <GraphArrowLayer arrows={renderGraph.arrows} visualScale={visualScale} pointProjector={projectReportPoint} />
       {(Array.isArray(renderGraph.labels) ? renderGraph.labels : []).map((rawLabel) => {
         const {
@@ -2101,7 +2198,7 @@ function getReportImageGraphLayout(rect) {
 function drawReportImageSingleGraph(context, graph, type, rect) {
   const renderGraph = getRenderableGraph(graph, type);
   const segments = getSegments(renderGraph.dividers);
-  const targetSvgRect = getReportImageGraphSvgRect(type, rect);
+  const targetSvgRect = getReportImageGraphSvgRect(type, rect, renderGraph);
   if (type === 'pie') {
     drawReportPieImage(context, renderGraph, segments, rect, targetSvgRect);
   } else {
@@ -2126,7 +2223,7 @@ function fitAspectRect(rect, aspectRatio) {
   };
 }
 
-function drawReportBarImage(context, graph, segments, rect, targetSvgRect = getReportImageGraphSvgRect('bar', rect)) {
+function drawReportBarImage(context, graph, segments, rect, targetSvgRect = getReportImageGraphSvgRect('bar', rect, graph)) {
   const scale = targetSvgRect.width / BAR_GRAPH_VIEWBOX.width;
   const originX = rect.x + targetSvgRect.x;
   const originY = rect.y + targetSvgRect.y;
@@ -2176,7 +2273,7 @@ function drawReportBarImage(context, graph, segments, rect, targetSvgRect = getR
   });
 }
 
-function drawReportPieImage(context, graph, segments, rect, targetSvgRect = getReportImageGraphSvgRect('pie', rect)) {
+function drawReportPieImage(context, graph, segments, rect, targetSvgRect = getReportImageGraphSvgRect('pie', rect, graph)) {
   const scale = targetSvgRect.width / 100;
   const centerX = rect.x + targetSvgRect.x + targetSvgRect.width / 2;
   const centerY = rect.y + targetSvgRect.y + targetSvgRect.height / 2;
@@ -2221,7 +2318,7 @@ function drawReportPieImage(context, graph, segments, rect, targetSvgRect = getR
   });
 }
 
-function drawReportImageLabels(context, graph, rect, targetSvgRect = getReportImageGraphSvgRect(graph.type, rect)) {
+function drawReportImageLabels(context, graph, rect, targetSvgRect = getReportImageGraphSvgRect(graph.type, rect, graph)) {
   const frameSize = { width: rect.width, height: rect.height };
   const labelScale = getReportGraphObjectScale(graph.type, frameSize, targetSvgRect);
   const sourceFrameSize = getCanonicalGraphEditFrame();
@@ -2261,7 +2358,7 @@ function drawReportImageLabels(context, graph, rect, targetSvgRect = getReportIm
   });
 }
 
-function drawReportImageArrows(context, graph, rect, targetSvgRect = getReportImageGraphSvgRect(graph.type, rect)) {
+function drawReportImageArrows(context, graph, rect, targetSvgRect = getReportImageGraphSvgRect(graph.type, rect, graph)) {
   const frameSize = { width: rect.width, height: rect.height };
   const visualScale = getReportGraphObjectScale(graph.type, frameSize, targetSvgRect);
   sanitizeGraphArrows(graph.arrows).forEach((arrow) => {
@@ -2791,19 +2888,6 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
             ]}
           />
 
-          <GraphScaleControl
-            scale={graphState.scale}
-            onConfirm={(nextScale) => {
-              if (nextScale !== normalizeGraphScale(graphState.scale)) {
-                setGraph({
-                  scale: nextScale,
-                  bar: { ...graphState.bar, dividers: [], fills: {}, undoStack: [] },
-                  pie: { ...graphState.pie, dividers: [], fills: {}, undoStack: [] }
-                });
-              }
-            }}
-          />
-
           <SectionTitle icon={MousePointer2} title="작업 모드" />
           <SegmentedControl
             className="graph-mode-control"
@@ -2917,13 +3001,7 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
         <ol className="interpret-sentence-list">
           <li className="interpret-sentence">
             <span className="sentence-number">1</span>
-            <span>가장 많은 학생이</span>
-            <SentenceBlank
-              value={currentAnswers.mostAction}
-              onChange={(value) => setAnswer('mostAction', value)}
-              label="1번 행동"
-            />
-            <span>하는</span>
+            <span>가장 많은 학생이 좋아하는</span>
             <SentenceBlank
               value={currentAnswers.mostSubject}
               onChange={(value) => setAnswer('mostSubject', value)}
@@ -2940,13 +3018,7 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
 
           <li className="interpret-sentence">
             <span className="sentence-number">2</span>
-            <span>가장 적은 학생이</span>
-            <SentenceBlank
-              value={currentAnswers.leastAction}
-              onChange={(value) => setAnswer('leastAction', value)}
-              label="2번 행동"
-            />
-            <span>하는</span>
+            <span>가장 적은 학생이 좋아하는</span>
             <SentenceBlank
               value={currentAnswers.leastSubject}
               onChange={(value) => setAnswer('leastSubject', value)}
@@ -2968,25 +3040,13 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
               onChange={(value) => setAnswer('compareMoreLeftItem', value)}
               label="3번 첫 번째 항목"
             />
-            <span>을</span>
-            <SentenceBlank
-              value={currentAnswers.compareMoreLeftAction}
-              onChange={(value) => setAnswer('compareMoreLeftAction', value)}
-              label="3번 첫 번째 행동"
-            />
-            <span>하는 학생은</span>
+            <span>을 좋아하는 학생은</span>
             <SentenceBlank
               value={currentAnswers.compareMoreRightItem}
               onChange={(value) => setAnswer('compareMoreRightItem', value)}
               label="3번 두 번째 항목"
             />
-            <span>을</span>
-            <SentenceBlank
-              value={currentAnswers.compareMoreRightAction}
-              onChange={(value) => setAnswer('compareMoreRightAction', value)}
-              label="3번 두 번째 행동"
-            />
-            <span>하는 학생보다</span>
+            <span>을 좋아하는 학생보다</span>
             <span>많습니다.</span>
           </li>
 
@@ -2997,25 +3057,13 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
               onChange={(value) => setAnswer('compareLessLeftItem', value)}
               label="4번 첫 번째 항목"
             />
-            <span>을</span>
-            <SentenceBlank
-              value={currentAnswers.compareLessLeftAction}
-              onChange={(value) => setAnswer('compareLessLeftAction', value)}
-              label="4번 첫 번째 행동"
-            />
-            <span>하는 학생은</span>
+            <span>을 좋아하는 학생은</span>
             <SentenceBlank
               value={currentAnswers.compareLessRightItem}
               onChange={(value) => setAnswer('compareLessRightItem', value)}
               label="4번 두 번째 항목"
             />
-            <span>을</span>
-            <SentenceBlank
-              value={currentAnswers.compareLessRightAction}
-              onChange={(value) => setAnswer('compareLessRightAction', value)}
-              label="4번 두 번째 행동"
-            />
-            <span>하는 학생보다</span>
+            <span>을 좋아하는 학생보다</span>
             <span>적습니다.</span>
           </li>
         </ol>
@@ -3279,7 +3327,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
     if (!editingLabelId) return;
     const input = labelInputRefs.current.get(editingLabelId);
     if (!input) return;
-    input.focus();
+    focusGraphLabelInput(input);
     const caretPosition = input.value.length;
     input.setSelectionRange(caretPosition, caretPosition);
   }, [editingLabelId]);
@@ -3346,6 +3394,27 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
   function removeLabelIfEmpty(labelId) {
     const label = graph.labels.find((candidate) => candidate.id === labelId);
     if (label && label.text.trim() === '') onLabelRemove(labelId);
+  }
+
+  function canPreventGraphLabelFocusScroll(input) {
+    if (typeof window === 'undefined' || !window.visualViewport) return false;
+    const rect = input.getBoundingClientRect();
+    const viewportHeight = window.visualViewport.height || window.innerHeight;
+    if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return false;
+    if (rect.top < 0 || rect.height <= 0) return false;
+    return rect.bottom <= viewportHeight * LABEL_PREVENT_SCROLL_SAFE_VIEWPORT_RATIO;
+  }
+
+  function focusGraphLabelInput(input) {
+    if (!canPreventGraphLabelFocusScroll(input)) {
+      input.focus();
+      return;
+    }
+    try {
+      input.focus({ preventScroll: true });
+    } catch (error) {
+      input.focus();
+    }
   }
 
   function releaseLabelSelection(nextLabelId = null) {
@@ -3651,7 +3720,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
   function startLabelAction(event, label, action) {
     event.preventDefault();
     event.stopPropagation();
-    if (editingLabelId === label.id && (action === 'move' || action === 'resize')) return;
+    if (editingLabelId === label.id && action === 'resize') return;
     onActivate();
     selectLabel(label.id);
     const canvasRect = event.currentTarget.closest('.graph-canvas').getBoundingClientRect();
@@ -3841,12 +3910,14 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
                   style={{ inset: `-${getLabelSelectionInset(label.fontSize)}px` }}
                   aria-hidden="true"
                 />
-                {!isEditing && LABEL_BORDER_MOVE_AREAS.map((area) => (
-                  <span
+                {LABEL_BORDER_MOVE_AREAS.map((area) => (
+                  <button
                     key={area}
+                    type="button"
                     className={`label-border-move-hit ${area}`}
                     title="이동"
-                    aria-hidden="true"
+                    aria-label="텍스트 상자 이동"
+                    tabIndex={-1}
                     data-label-id={label.id}
                     onPointerDown={(event) => startLabelAction(event, displayLabel, 'move')}
                     onPointerUp={endLabelAction}
@@ -4122,22 +4193,34 @@ function GraphArrowItem({
   );
 }
 
-function SingleGraphDisplay({ graph, segments, previewDivider = null, previewSegmentKey = null }) {
+function getGraphSvgRectStyle(svgRect) {
+  if (!svgRect || !svgRect.width || !svgRect.height) return undefined;
+  return {
+    left: `${svgRect.x}px`,
+    top: `${svgRect.y}px`,
+    width: `${svgRect.width}px`,
+    height: `${svgRect.height}px`,
+    maxHeight: 'none',
+    transform: 'none'
+  };
+}
+
+function SingleGraphDisplay({ graph, segments, previewDivider = null, previewSegmentKey = null, svgRect = null }) {
   return graph.type === 'pie' ? (
-    <PieGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegmentKey} />
+    <PieGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegmentKey} svgRect={svgRect} />
   ) : (
-    <BarGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegmentKey} />
+    <BarGraph graph={graph} segments={segments} previewDivider={previewDivider} previewSegmentKey={previewSegmentKey} svgRect={svgRect} />
   );
 }
 
-function BarGraph({ graph, segments, previewDivider, previewSegmentKey }) {
+function BarGraph({ graph, segments, previewDivider, previewSegmentKey, svgRect }) {
   const scale = normalizeGraphScale(graph.scale);
   const labelTicks = makePercentLabelTicks(scale, 'bar');
   const minorTicks = makeGraphTicks(scale, true).filter((tick) => !labelTicks.includes(tick));
   const box = BAR_GRAPH_BOX;
   const barRadius = 2.2;
   return (
-    <svg className="bar-svg" viewBox={`0 0 ${BAR_GRAPH_VIEWBOX.width} ${BAR_GRAPH_VIEWBOX.height}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <svg className="bar-svg" style={getGraphSvgRectStyle(svgRect)} viewBox={`0 0 ${BAR_GRAPH_VIEWBOX.width} ${BAR_GRAPH_VIEWBOX.height}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
       <defs>
         <clipPath id="bar-graph-clip">
           <rect x={box.left} y={box.top} width={box.width} height={box.height} rx={barRadius} />
@@ -4196,12 +4279,12 @@ function barPercentX(percent) {
   return BAR_GRAPH_BOX.left + percent * (BAR_GRAPH_BOX.width / 100);
 }
 
-function PieGraph({ graph, segments, previewDivider, previewSegmentKey }) {
+function PieGraph({ graph, segments, previewDivider, previewSegmentKey, svgRect }) {
   const scale = normalizeGraphScale(graph.scale);
   const labelTicks = makePercentLabelTicks(scale, 'pie');
   const minorTicks = makeGraphTicks(scale).filter((tick) => !labelTicks.includes(tick));
   return (
-    <svg className="pie-svg" viewBox="0 0 100 100" aria-hidden="true">
+    <svg className="pie-svg" style={getGraphSvgRectStyle(svgRect)} viewBox="0 0 100 100" aria-hidden="true">
       <circle cx="50" cy="50" r="38" fill="#ffffff" stroke="#1f2d3d" strokeWidth="0.9" vectorEffect="non-scaling-stroke" />
       {segments.map((segment) => {
         const color = graph.fills[segment.key] || 'rgba(255,255,255,0)';
@@ -4515,18 +4598,8 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function normalizeGraphScale(value, fallback = DEFAULT_GRAPH_SCALE) {
-  const safeFallback = normalizeGraphScaleFallback(fallback);
-  if (value === undefined || value === null || value === '') return safeFallback;
-  const scale = Math.round(Number(value));
-  if (!Number.isFinite(scale)) return safeFallback;
-  return clamp(scale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
-}
-
-function normalizeGraphScaleFallback(value) {
-  const fallback = Math.round(Number(value));
-  if (!Number.isFinite(fallback)) return DEFAULT_GRAPH_SCALE;
-  return clamp(fallback, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+function normalizeGraphScale() {
+  return DEFAULT_GRAPH_SCALE;
 }
 
 function makeGraphTicks(scale, includeEnd = false) {
@@ -4878,7 +4951,6 @@ function packRowsForShare(rows, width) {
 function packGraphForShare(graph, graphType = null) {
   const packed = {};
   const graphState = normalizeGraphState(graph);
-  const scale = normalizeGraphScale(graphState.scale);
   const mode = GRAPH_MODE_CODES[normalizeStoredGraphMode(graphState.mode)] || GRAPH_MODE_CODES.divide;
   const activeColor = normalizeGraphActiveColor(graphState.activeColor);
   const scopedGraphType = normalizeOptionalGraphType(graphType);
@@ -4887,7 +4959,6 @@ function packGraphForShare(graph, graphType = null) {
     const drawingPayload = packGraphDrawingForShare(getGraphDrawing(graphState, scopedGraphType));
     if (drawingPayload) Object.assign(packed, drawingPayload);
     packed.y = SHARE_GRAPH_TYPE_CODES[scopedGraphType];
-    if (scale !== DEFAULT_GRAPH_SCALE) packed.s = scale;
     if (mode !== GRAPH_MODE_CODES.divide) packed.m = mode;
     if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLOR_SHARE_PALETTE);
     return packed;
@@ -4897,7 +4968,6 @@ function packGraphForShare(graph, graphType = null) {
   const barPayload = packGraphDrawingForShare(graphState.bar);
   const piePayload = packGraphDrawingForShare(graphState.pie);
 
-  if (scale !== DEFAULT_GRAPH_SCALE) packed.s = scale;
   if (mode !== GRAPH_MODE_CODES.divide) packed.m = mode;
   if (activeColor !== GRAPH_COLORS[0]) packed.a = encodeColorForShare(activeColor, GRAPH_COLOR_SHARE_PALETTE);
   if (activeType !== 'bar') packed.x = 'p';
@@ -4982,7 +5052,7 @@ function unpackSharePayload(packed) {
   const scope = SHARE_SCOPES_BY_CODE[packed.q] || 'plan';
   if (scope === 'plan') return { scope, plan: unpackPlanForShare(packed.p) };
   if (scope === 'table') return { scope, table: unpackTableForShare(packed.t) };
-  if (scope === 'graph') return { scope, ...unpackGraphScopeForShare(packed.g, getShareGraphScaleFallback(packed)) };
+  if (scope === 'graph') return { scope, ...unpackGraphScopeForShare(packed.g) };
   if (scope === 'interpret') return { scope, interpretation: unpackInterpretationForShare(packed.i) };
   return {
     scope: 'full',
@@ -4993,12 +5063,6 @@ function unpackSharePayload(packed) {
 
 function isSupportedShareVersion(version) {
   return version === SHARE_VERSION || version === PREVIOUS_SCOPED_SHARE_VERSION || version === LEGACY_SHARE_VERSION;
-}
-
-function getShareGraphScaleFallback(packed) {
-  return packed && (packed.v === PREVIOUS_SCOPED_SHARE_VERSION || packed.v === LEGACY_SHARE_VERSION)
-    ? PREVIOUS_DEFAULT_GRAPH_SCALE
-    : DEFAULT_GRAPH_SCALE;
 }
 
 function unpackLegacyShareState(packed) {
@@ -5017,7 +5081,7 @@ function unpackLegacyShareState(packed) {
       rows: unpackRowsForShare(tablePayload, tableWidth),
       tableDefaultsCleared: true
     },
-    graph: unpackGraphForShare(packed.g, getShareGraphScaleFallback(packed))
+    graph: unpackGraphForShare(packed.g)
   });
 }
 
@@ -5053,14 +5117,14 @@ function unpackInterpretationForShare(encoded) {
   return normalizeInterpretationAnswers(asPlainObject(encoded));
 }
 
-function unpackGraphScopeForShare(encoded, scaleFallback = DEFAULT_GRAPH_SCALE) {
+function unpackGraphScopeForShare(encoded) {
   const graph = asPlainObject(encoded);
   const graphType = decodeGraphTypeForShare(graph.y);
-  if (!graphType) return { graph: unpackGraphForShare(encoded, scaleFallback) };
+  if (!graphType) return { graph: unpackGraphForShare(encoded) };
   return {
     graphType,
     graph: {
-      scale: normalizeGraphScale(graph.s, scaleFallback),
+      scale: normalizeGraphScale(graph.s),
       mode: GRAPH_MODES_BY_CODE[graph.m] || 'divide',
       activeColor: decodeColorForShare(graph.a, GRAPH_COLOR_SHARE_PALETTE, GRAPH_COLORS[0]),
       activeType: graphType,
@@ -5095,10 +5159,10 @@ function unpackRowsForShare(tablePayload, width) {
   return [unpackRowForShare(tablePayload.r, width)];
 }
 
-function unpackGraphForShare(encoded, scaleFallback = DEFAULT_GRAPH_SCALE) {
+function unpackGraphForShare(encoded) {
   const graph = asPlainObject(encoded);
   const hasSplitGraph = graph.b || graph.p;
-  const scale = normalizeGraphScale(graph.s, scaleFallback);
+  const scale = normalizeGraphScale(graph.s);
   const legacyType = graph.t === 'p' ? 'pie' : 'bar';
   return {
     scale,

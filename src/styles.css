@@ -1,6 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@200..900&family=Dongle:wght@300;400;700&display=swap');
 
 :root {
+  --body-font: "Chiron GoRound TC", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  --menu-font: "Dongle", "Chiron GoRound TC", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  --menu-font-size: 25px;
   --page: #f7f8f4;
   --ink: #1f2d3d;
   --muted: #66727f;
@@ -24,7 +27,7 @@
   --table-cell-height: 40px;
   --compact-table-cell-height: 32px;
   --app-height: 100vh;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  font-family: var(--body-font);
   color: var(--ink);
   background: var(--page);
 }
@@ -96,13 +99,14 @@ h1 {
 
 .tabbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) var(--nav-button-size);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-gap: var(--tight-gap);
   padding: var(--tight-gap);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.78);
   box-shadow: 0 8px 18px rgba(31, 45, 61, 0.06);
+  font-family: var(--menu-font);
 }
 
 .qr-nav-button {
@@ -131,15 +135,22 @@ h1 {
   padding: 0 10px;
   box-shadow: none;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  font-size: var(--menu-font-size);
+  font-weight: 400;
+}
+
+.tabbar .tab-button {
+  font-size: var(--menu-font-size);
 }
 
 .tab-button svg {
   margin-right: 8px;
 }
 
-.tab-button span {
+.tabbar .tab-button span {
   min-width: 0;
-  line-height: 1.1;
+  font-size: var(--menu-font-size);
+  line-height: 0.95;
   overflow-wrap: anywhere;
   text-align: center;
 }
@@ -832,65 +843,6 @@ textarea.text-input:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.scale-control {
-  margin-bottom: var(--tight-gap);
-}
-
-.scale-control-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 124px;
-  grid-gap: 8px;
-  align-items: center;
-}
-
-.scale-control-top span {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.scale-stepper {
-  display: grid;
-  grid-template-columns: 34px minmax(42px, 1fr) 34px;
-  grid-gap: 4px;
-  align-items: center;
-  min-width: 0;
-}
-
-.scale-step-button,
-.scale-value {
-  min-height: 36px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #ffffff;
-  color: var(--ink);
-  font-weight: 800;
-}
-
-.scale-step-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  cursor: pointer;
-}
-
-.scale-step-button:disabled {
-  background: #f4f6f4;
-  color: var(--muted);
-  cursor: default;
-  opacity: 0.72;
-}
-
-.scale-value {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  font-size: 13px;
-  text-align: center;
-}
-
 .graph-main {
   min-width: 0;
   min-height: 0;
@@ -911,6 +863,11 @@ textarea.text-input:focus {
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+.graph-canvas-panel.is-pie {
+  width: min(100%, 760px);
+  margin-inline: auto;
 }
 
 .graph-canvas-panel .graph-canvas {
@@ -947,8 +904,8 @@ textarea.text-input:focus {
   min-width: 0;
   min-height: 40px;
   padding: 0 8px;
-  font-size: 13px;
-  font-weight: 800;
+  font-size: inherit;
+  font-weight: 400;
 }
 
 .graph-report-button,
@@ -1275,6 +1232,7 @@ textarea.text-input:focus {
   padding: 0;
   background: transparent;
   appearance: none;
+  font: inherit;
   cursor: grab;
   touch-action: none;
 }
@@ -1783,7 +1741,7 @@ textarea.text-input:focus {
 .report-title {
   margin-bottom: 14px;
   color: #111111;
-  font-family: "Jua", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  font-family: var(--body-font);
   font-size: 42px;
   font-weight: 400;
   line-height: 1.08;
@@ -2055,6 +2013,7 @@ textarea.text-input:focus {
     --panel-pad: 8px;
     --layout-gap: 6px;
     --tight-gap: 5px;
+    --menu-font-size: 22px;
     --tab-height: 38px;
     --nav-button-size: 38px;
     --control-height: 36px;
@@ -2068,7 +2027,7 @@ textarea.text-input:focus {
   }
 
   .tabbar {
-    grid-template-columns: repeat(4, minmax(0, 1fr)) var(--nav-button-size);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .qr-nav-button {
@@ -2191,7 +2150,6 @@ textarea.text-input:focus {
     display: none;
   }
 
-  .scale-control,
   .segmented-control,
   .graph-swatches,
   .graph-action-row {
@@ -2229,32 +2187,12 @@ textarea.text-input:focus {
     font-size: 12px;
   }
 
+  .graph-action-button {
+    font-size: 12px;
+  }
+
   .segmented-control button svg {
     margin-right: 3px;
-  }
-
-  .scale-control {
-    margin-bottom: 0;
-  }
-
-  .scale-control-top {
-    grid-template-columns: minmax(0, 1fr) 110px;
-    grid-gap: 5px;
-  }
-
-  .scale-control-top span,
-  .scale-value {
-    font-size: 12px;
-  }
-
-  .scale-stepper {
-    grid-template-columns: 30px minmax(34px, 1fr) 30px;
-  }
-
-  .scale-step-button,
-  .scale-value {
-    min-height: 30px;
-    font-size: 12px;
   }
 
   .graph-action-row {
@@ -2432,8 +2370,12 @@ textarea.text-input:focus {
 }
 
 @media (max-width: 480px) {
+  :root {
+    --menu-font-size: 20px;
+  }
+
   .tab-button span {
-    font-size: 12px;
+    font-size: var(--menu-font-size);
   }
 
   .tab-button svg {
@@ -2510,7 +2452,6 @@ textarea.text-input:focus {
     display: none;
   }
 
-  .graph-layout .scale-control,
   .graph-layout .segmented-control,
   .graph-layout .graph-action-row {
     margin: 0;
@@ -2537,26 +2478,6 @@ textarea.text-input:focus {
 
   .graph-layout .segmented-control button svg {
     margin-right: 3px;
-  }
-
-  .graph-layout .scale-control-top {
-    grid-template-columns: minmax(0, 1fr) 104px;
-    grid-gap: 5px;
-  }
-
-  .graph-layout .scale-control-top span,
-  .graph-layout .scale-value {
-    font-size: 12px;
-  }
-
-  .graph-layout .scale-stepper {
-    grid-template-columns: 30px minmax(28px, 1fr) 30px;
-  }
-
-  .graph-layout .scale-step-button,
-  .graph-layout .scale-value {
-    min-height: 30px;
-    font-size: 12px;
   }
 
   .graph-layout .graph-action-row {
@@ -2607,6 +2528,7 @@ textarea.text-input:focus {
     --panel-pad: 6px;
     --layout-gap: 4px;
     --tight-gap: 4px;
+    --menu-font-size: 19px;
     --tab-height: 34px;
     --nav-button-size: 34px;
     --control-height: 32px;
