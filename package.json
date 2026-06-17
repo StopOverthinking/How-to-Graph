@@ -11,6 +11,7 @@
     "demo:record:plan": "node scripts/record-demo.mjs --scenario=plan",
     "demo:record:table": "node scripts/record-demo.mjs --scenario=table",
     "demo:record:graph": "node scripts/record-demo.mjs --scenario=graph",
+    "demo:record:interpret": "node scripts/record-demo.mjs --scenario=interpret",
     "codex:context": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/codex-context.ps1",
     "codex:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/codex-verify.ps1"
   },

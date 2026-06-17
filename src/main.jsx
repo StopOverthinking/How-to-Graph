@@ -1640,15 +1640,15 @@ function DemoOverlay() {
         window.setTimeout(() => setTargetGlow(null), 560);
         return point;
       },
-      showSpotlight({ selector, rect, title = '', text = '', placement = 'auto', padding = 12, radius = 10, calloutGap, calloutHeight } = {}) {
+      showSpotlight({ selector, rect, title = '', text = '', placement = 'auto', padding = 12, radius = 10, calloutGap, calloutHeight, calloutWidth } = {}) {
         const targetRect = rect || getTargetRect(selector, padding);
         const nextRect = toOverlayRect(targetRect);
         setSpotlight(nextRect ? { ...nextRect, radius } : null);
-        setCallout(text || title ? { title, text, placement, gap: calloutGap, height: calloutHeight } : null);
+        setCallout(text || title ? { title, text, placement, gap: calloutGap, height: calloutHeight, width: calloutWidth } : null);
         return nextRect;
       },
-      setCallout({ title = '', text = '', placement = 'center', calloutGap, calloutHeight } = {}) {
-        setCallout(text || title ? { title, text, placement, gap: calloutGap, height: calloutHeight } : null);
+      setCallout({ title = '', text = '', placement = 'center', calloutGap, calloutHeight, calloutWidth } = {}) {
+        setCallout(text || title ? { title, text, placement, gap: calloutGap, height: calloutHeight, width: calloutWidth } : null);
       },
       clearSpotlight() {
         setSpotlight(null);
@@ -1734,7 +1734,9 @@ function getDemoCalloutStyle(callout, spotlight) {
   const scale = getDemoOverlayScale();
   const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth / scale;
   const viewportHeight = typeof window === 'undefined' ? 720 : window.innerHeight / scale;
-  const width = Math.min(360, Math.max(260, viewportWidth - margin * 2));
+  const requestedWidth = Number(callout.width);
+  const maxWidth = Number.isFinite(requestedWidth) ? requestedWidth : 360;
+  const width = Math.min(maxWidth, Math.max(260, viewportWidth - margin * 2));
   const requestedHeight = Number(callout.height);
   const height = Number.isFinite(requestedHeight) ? Math.max(44, requestedHeight) : 104;
   const placement = callout.placement || 'auto';
@@ -3403,7 +3405,7 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
       </div>
 
       <form className="interpret-form" aria-label="그래프 해석 문장 틀" onSubmit={(event) => event.preventDefault()}>
-        <ol className="interpret-sentence-list">
+        <ol className="interpret-sentence-list" data-demo-id="interpret-sentence-list">
           <li className="interpret-sentence">
             <span className="sentence-number">1</span>
             <span>가장 많은 학생이 좋아하는</span>

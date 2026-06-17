@@ -38,6 +38,7 @@ const beveragePlanTitle = '우리 반 학생이 좋아하는 음료수 종류의
 const beveragePlanItems = ['탄산음료', '과일주스', '차/커피', '기타'];
 const beverageCounts = ['8', '6', '4', '2', '20'];
 const beveragePercents = ['40', '30', '20', '10', '100'];
+const demoGraphColors = ['#8fe6d2', '#ffd37a', '#ff9b9b', '#8fc2ff'];
 const tableExplanationMs = 3000;
 const tableFillTiming = {
   delay: 28,
@@ -91,7 +92,7 @@ function resetGraphAnnotationState() {
 function getScenarioName() {
   const scenarioArg = process.argv.find((arg) => arg.startsWith('--scenario='));
   const requested = (scenarioArg ? scenarioArg.split('=')[1] : process.env.DEMO_SCENARIO || 'full').trim();
-  return ['plan', 'table', 'graph', 'full'].includes(requested) ? requested : 'full';
+  return ['plan', 'table', 'graph', 'interpret', 'full'].includes(requested) ? requested : 'full';
 }
 
 function parsePositiveNumber(value, fallback) {
@@ -201,10 +202,13 @@ async function warmDemoPage(browser) {
   if (scenario === 'plan') await seedTwoItemPlanState(warmPage);
   if (scenario === 'table') await seedBeveragePlanState(warmPage);
   if (scenario === 'graph') await seedBeverageTableState(warmPage);
+  if (scenario === 'interpret') await seedCompletedBeverageGraphState(warmPage);
   const warmUrl = scenario === 'table' || scenario === 'plan'
     ? seededDemoUrl
     : scenario === 'graph'
       ? `${seededDemoUrl}&demoTab=table`
+      : scenario === 'interpret'
+        ? `${seededDemoUrl}&demoTab=graph`
       : demoUrl;
   await warmPage.goto(warmUrl, { waitUntil: 'networkidle' });
   await applyDemoViewportZoom(warmPage);
@@ -345,6 +349,40 @@ function createBeverageTableState() {
   };
 }
 
+function createDemoGraphFills() {
+  return graphSegments.reduce((fills, segment) => {
+    fills[`${segment.start}-${segment.end}`] = demoGraphColors[segment.colorIndex] || demoGraphColors[0];
+    return fills;
+  }, {});
+}
+
+function createCompletedGraphDrawing(type) {
+  return {
+    type,
+    dividers: graphDividers,
+    fills: createDemoGraphFills(),
+    undoStack: [],
+    labels: [],
+    arrows: []
+  };
+}
+
+function createCompletedBeverageGraphState() {
+  const state = createBeverageTableState();
+  return {
+    ...state,
+    graph: {
+      ...state.graph,
+      scale: 10,
+      mode: 'arrow',
+      activeColor: demoGraphColors[0],
+      activeType: 'pie',
+      bar: createCompletedGraphDrawing('bar'),
+      pie: createCompletedGraphDrawing('pie')
+    }
+  };
+}
+
 async function seedTwoItemPlanState(page) {
   await page.addInitScript((state) => {
     window.localStorage.setItem('how-to-graph-state', JSON.stringify(state));
@@ -364,6 +402,13 @@ async function seedBeverageTableState(page) {
     window.localStorage.setItem('how-to-graph-state', JSON.stringify(state));
     window.localStorage.removeItem('how-to-graph-interpretation');
   }, createBeverageTableState());
+}
+
+async function seedCompletedBeverageGraphState(page) {
+  await page.addInitScript((state) => {
+    window.localStorage.setItem('how-to-graph-state', JSON.stringify(state));
+    window.localStorage.removeItem('how-to-graph-interpretation');
+  }, createCompletedBeverageGraphState());
 }
 
 async function callDemo(page, method, args = {}) {
@@ -495,7 +540,8 @@ async function spotlightSelector(page, selector, title, options = {}) {
     padding: options.padding,
     radius: options.radius,
     calloutGap: options.calloutGap,
-    calloutHeight: options.calloutHeight
+    calloutHeight: options.calloutHeight,
+    calloutWidth: options.calloutWidth
   });
   await page.waitForTimeout(options.duration ?? graphExplanationMs);
 }
@@ -813,6 +859,76 @@ async function addNarrowSegmentLabelAndArrow(page, type, options = {}) {
   await dragGraphArrow(page, type, arrowStart, arrowEnd, options);
 }
 
+function makePreparedGraphLabel(type, index, text, point, options = {}) {
+  return {
+    id: `${type}-label-${index + 1}`,
+    text,
+    x: point.canvas.x,
+    y: point.canvas.y,
+    width: options.width || defaultGraphLabelWidth,
+    fontSize: options.fontSize || 20,
+    color: options.color || '#1f2d3d'
+  };
+}
+
+async function prepareCompletedGraphAnnotations(page) {
+  resetGraphAnnotationState();
+  for (const type of ['bar', 'pie']) {
+    const labels = [];
+    const mainSegments = graphSegments.slice(0, 3);
+
+    await logStep(`interpret: activate ${type} graph`);
+    graphAnnotationState[type] = { labels: [], arrows: [] };
+    await setGraphAnnotations(page, type, { after: 160 });
+    await page.locator(graphCanvasSelector(type)).waitFor({ state: 'visible', timeout: 8000 });
+    await logStep(`interpret: ${type} graph ready`);
+
+    for (const segment of mainSegments) {
+      const point = await getGraphLocationPoints(page, type, {
+        percent: (segment.start + segment.end) / 2,
+        radius: type === 'pie' ? pieGraphCircle.radius * 0.42 : undefined,
+        yRatio: 0.46
+      });
+      labels.push(makePreparedGraphLabel(
+        type,
+        labels.length,
+        `${segment.label}\n(${segment.percent}%)`,
+        point
+      ));
+      await logStep(`interpret: ${type} label ${segment.label}`);
+    }
+
+    const outsideLocation = type === 'pie'
+      ? { canvas: { x: 36, y: 16 } }
+      : { canvas: { x: 93, y: 27 } };
+    const outsidePoint = await getGraphLocationPoints(page, type, outsideLocation);
+    labels.push(makePreparedGraphLabel(type, labels.length, '기타\n(10%)', outsidePoint));
+
+    const arrowStart = type === 'pie'
+      ? await getGraphLocationPoints(page, type, { canvas: { x: 42, y: 22 } })
+      : await getGraphLocationPoints(page, type, { canvas: { x: 91, y: 31 } });
+    const arrowEnd = type === 'pie'
+      ? await getGraphLocationPoints(page, type, { canvas: { x: 46.5, y: 34 } })
+      : await getGraphLocationPoints(page, type, { percent: 96, yRatio: 0.5 });
+
+    graphAnnotationState[type] = {
+      labels,
+      arrows: [{
+        id: `${type}-arrow-1`,
+        x1: arrowStart.canvas.x,
+        y1: arrowStart.canvas.y,
+        x2: arrowEnd.canvas.x,
+        y2: arrowEnd.canvas.y
+      }]
+    };
+    await setGraphAnnotations(page, type, { after: 160 });
+    await logStep(`interpret: ${type} annotations applied`);
+  }
+  await page.waitForTimeout(240);
+  await page.locator('.graph-presentation-bar').click({ position: { x: 12, y: 12 }, timeout: 8000 });
+  await page.waitForTimeout(160);
+}
+
 async function saveReportDownload(page) {
   const downloadPromise = page.waitForEvent('download', { timeout: 12000 }).catch(() => null);
   await clickDemoId(page, 'report-save', { after: 600 });
@@ -1097,6 +1213,17 @@ async function runPlanDemo(page) {
   await page.waitForTimeout(3000);
   await callDemo(page, 'clearSpotlight');
   await page.waitForTimeout(300);
+
+  await showDemoSpotlight(page, {
+    selector: selectorForDemoId('qr-button'),
+    title: '모둠장이 작성한 계획을 모두가 공유',
+    placement: 'bottom'
+  });
+  await page.waitForTimeout(3000);
+  await callDemo(page, 'clearSpotlight');
+  await clickDemoId(page, 'qr-button', { after: 1200 });
+  await page.locator('.share-dialog').waitFor({ state: 'visible', timeout: 8000 });
+  await page.waitForTimeout(800);
 }
 
 async function runTableDemo(page) {
@@ -1266,6 +1393,36 @@ async function runGraphDemo(page) {
   await page.waitForTimeout(700);
 }
 
+async function runInterpretDemo(page) {
+  await logStep('interpret: seed completed graph and open graph tab');
+  await seedCompletedBeverageGraphState(page);
+  await page.goto(`${seededDemoUrl}&demoTab=graph`, { waitUntil: 'domcontentloaded' });
+  await applyDemoViewportZoom(page);
+  await waitForDemoReady(page);
+  await page.locator(selectorForDemoId('tab-graph')).waitFor({ state: 'visible', timeout: 8000 });
+  await page.locator(graphCanvasSelector('pie')).waitFor({ state: 'visible', timeout: 8000 });
+  await logStep('interpret: prepare graph labels');
+  await prepareCompletedGraphAnnotations(page);
+  await page.waitForTimeout(300);
+  markDemoStart();
+
+  await logStep('interpret: open interpret tab');
+  await spotlightDemoId(page, 'tab-interpret', '해석하기 시작', { placement: 'bottom' });
+  await clearDemoSpotlight(page);
+  await clickDemoId(page, 'tab-interpret', { after: 1000 });
+
+  await logStep('interpret: explain sentence list');
+  await page.locator(selectorForDemoId('interpret-sentence-list')).waitFor({ state: 'visible', timeout: 8000 });
+  await callDemo(page, 'setPointerVisible', false);
+  await spotlightDemoId(
+    page,
+    'interpret-sentence-list',
+    '자신의 모둠 번호에 맞는 해석하기 문장을 채워넣기',
+    { placement: 'left', calloutWidth: 520 }
+  );
+  await page.waitForTimeout(700);
+}
+
 async function runDemo(page) {
   await page.goto(demoUrl, { waitUntil: 'networkidle' });
   await applyDemoViewportZoom(page);
@@ -1427,6 +1584,8 @@ async function main() {
       await runTableDemo(page);
     } else if (scenario === 'graph') {
       await runGraphDemo(page);
+    } else if (scenario === 'interpret') {
+      await runInterpretDemo(page);
     } else {
       await runDemo(page);
     }
