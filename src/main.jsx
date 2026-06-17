@@ -679,7 +679,7 @@ function measureLabelLineWidth(line, fontSize, inputElement) {
       const fontFamily = computedStyle && computedStyle.fontFamily
         ? computedStyle.fontFamily
         : 'system-ui, sans-serif';
-      context.font = `700 ${fontSize}px ${fontFamily}`;
+      context.font = `900 ${fontSize}px ${fontFamily}`;
       return context.measureText(line).width;
     }
   }
@@ -2448,7 +2448,7 @@ function drawReportImage(context, report) {
     align: 'center',
     fontSize: 76,
     minFontSize: 44,
-    weight: 700,
+    weight: 400,
     fontFamily: REPORT_IMAGE_TITLE_FONT_FAMILY,
     maxLines: 2
   });
@@ -2770,7 +2770,7 @@ function drawCanvasTextBox(context, text, rect, options = {}) {
 
   const maxFontSize = options.fontSize || 24;
   const minFontSize = options.minFontSize || Math.min(14, maxFontSize);
-  const weight = options.weight || 700;
+  const weight = options.weight || 800;
   const align = options.align || 'center';
   const lineHeightRatio = options.lineHeight || 1.18;
   const explicitMaxLines = options.maxLines || null;
