@@ -20,6 +20,7 @@ import {
   FileText,
   Maximize2,
   Megaphone,
+  Minus,
   MousePointer2,
   PaintBucket,
   PenLine,
