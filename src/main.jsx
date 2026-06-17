@@ -2105,7 +2105,7 @@ function drawReportImageTable(context, headerRow, rows, rect) {
       }, {
         fontSize: isHeader || cellIndex === 0 ? 25 : 23,
         minFontSize: 14,
-        weight: 900,
+        weight: isHeader || cellIndex === 0 ? 600 : 400,
         maxLines: 2
       });
       cellX += cellWidth;
@@ -2262,7 +2262,7 @@ function drawReportBarImage(context, graph, segments, rect, targetSvgRect = getR
   labelTicks.forEach((tick) => {
     const x = barX(tick);
     drawCanvasLine(context, x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 0.6), x, viewY(BAR_GRAPH_BOX.top + BAR_GRAPH_BOX.height + 4.2), '#52606f', 2);
-    setReportCanvasFont(context, 3.1 * scale, 900);
+    setReportCanvasFont(context, 3.1 * scale, 600);
     context.fillStyle = '#52606f';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
@@ -2306,7 +2306,7 @@ function drawReportPieImage(context, graph, segments, rect, targetSvgRect = getR
     const outer = getReportPolarPoint(centerX, centerY, PIE_MAJOR_TICK_OUTER_RADIUS * scale, tick);
     const label = getReportPolarPoint(centerX, centerY, PIE_TICK_LABEL_RADIUS * scale, tick);
     drawCanvasLine(context, inner.x, inner.y, outer.x, outer.y, '#52606f', 2);
-    setReportCanvasFont(context, 4 * scale, 900);
+    setReportCanvasFont(context, 4 * scale, 600);
     context.fillStyle = '#52606f';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
@@ -2350,7 +2350,7 @@ function drawReportImageLabels(context, graph, rect, targetSvgRect = getReportIm
       color: label.color,
       fontSize: label.fontSize * labelScale,
       minFontSize: Math.max(12, MIN_LABEL_FONT_SIZE * labelScale),
-      weight: 900,
+      weight: 500,
       lineHeight: LABEL_LINE_HEIGHT,
       maxLines: Math.max(1, Math.floor(labelHeight / (label.fontSize * labelScale * LABEL_LINE_HEIGHT)))
     });
