@@ -128,6 +128,9 @@ const LABEL_BOX_VERTICAL_PADDING_EM = 0.75;
 const LABEL_BOX_VERTICAL_GUARD_PX = 2;
 const LABEL_SELECTION_INSET_EM = 0.3;
 const LABEL_PREVENT_SCROLL_SAFE_VIEWPORT_RATIO = 0.58;
+const GRAPH_LABEL_KEYBOARD_MODE_CLASS = 'is-graph-label-keyboard-editing';
+const GRAPH_LABEL_KEYBOARD_PAN_VAR = '--graph-label-keyboard-pan-y';
+const GRAPH_LABEL_KEYBOARD_PAN_GAP = 12;
 const DEFAULT_LABEL_FONT_SIZE = 20;
 const MIN_LABEL_FONT_SIZE = 12;
 const MAX_LABEL_FONT_SIZE = 34;
@@ -1245,9 +1248,11 @@ function App() {
     let frameId = 0;
 
     function applyAppHeight() {
+      if (root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
       if (frameId) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
+        if (root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
         const viewportHeight = window.visualViewport && window.visualViewport.height
           ? window.visualViewport.height
           : window.innerHeight;
@@ -1272,6 +1277,8 @@ function App() {
         window.visualViewport.removeEventListener('scroll', applyAppHeight);
       }
       root.style.removeProperty('--app-height');
+      root.style.removeProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR);
+      root.classList.remove(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
     };
   }, []);
 
@@ -2752,7 +2759,7 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
     });
   }
 
-  function handleGraphPoint(type, point) {
+  function handleGraphPoint(type, point, options = {}) {
     if ((graphState.mode === 'divide' || graphState.mode === 'paint') && !point.insideGraph) return;
 
     if (graphState.mode === 'divide') {
@@ -2792,9 +2799,10 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
 
     if (graphState.mode !== 'text') return;
 
+    const labelId = options && options.labelId ? options.labelId : makeId('label');
     updateGraphDrawing(type, (currentDrawing) => ({
       labels: currentDrawing.labels.concat({
-        id: makeId('label'),
+        id: labelId,
         text: '',
         x: point.canvasX,
         y: point.canvasY,
@@ -2961,7 +2969,7 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
                 graph={activeRenderGraph}
                 segments={getSegments(activeRenderGraph.dividers)}
                 onActivate={() => setGraph({ activeType })}
-                onPoint={(point) => handleGraphPoint(activeType, point)}
+                onPoint={(point, options) => handleGraphPoint(activeType, point, options)}
                 onArrowAdd={(startPoint, endPoint) => addArrow(activeType, startPoint, endPoint)}
                 onArrowChange={(arrowId, patch) => updateArrow(activeType, arrowId, patch)}
                 onArrowRemove={(arrowId) => removeArrow(activeType, arrowId)}
@@ -3325,11 +3333,31 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
 
   useEffect(() => {
     if (!editingLabelId) return;
-    const input = labelInputRefs.current.get(editingLabelId);
-    if (!input) return;
-    focusGraphLabelInput(input);
-    const caretPosition = input.value.length;
-    input.setSelectionRange(caretPosition, caretPosition);
+    focusLabelById(editingLabelId);
+  }, [editingLabelId]);
+
+  useEffect(() => {
+    if (!editingLabelId || !isIosSafari() || !window.visualViewport) return undefined;
+    let frameId = 0;
+
+    function scheduleKeyboardPanUpdate() {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        updateGraphLabelKeyboardPan(labelInputRefs.current.get(editingLabelId));
+      });
+    }
+
+    scheduleKeyboardPanUpdate();
+    window.visualViewport.addEventListener('resize', scheduleKeyboardPanUpdate, { passive: true });
+    window.visualViewport.addEventListener('scroll', scheduleKeyboardPanUpdate, { passive: true });
+
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.visualViewport.removeEventListener('resize', scheduleKeyboardPanUpdate);
+      window.visualViewport.removeEventListener('scroll', scheduleKeyboardPanUpdate);
+      endGraphLabelKeyboardMode();
+    };
   }, [editingLabelId]);
 
   useEffect(() => {
@@ -3396,6 +3424,64 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
     if (label && label.text.trim() === '') onLabelRemove(labelId);
   }
 
+  function getGraphLabelKeyboardRoot() {
+    return typeof document === 'undefined' ? null : document.documentElement;
+  }
+
+  function getCurrentGraphLabelKeyboardPan(root) {
+    if (!root) return 0;
+    const currentPan = Number.parseFloat(root.style.getPropertyValue(GRAPH_LABEL_KEYBOARD_PAN_VAR));
+    return Number.isFinite(currentPan) ? currentPan : 0;
+  }
+
+  function beginGraphLabelKeyboardMode() {
+    if (!isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return false;
+    const root = getGraphLabelKeyboardRoot();
+    if (!root) return false;
+    const appShell = document.querySelector('.app-shell');
+    const frozenHeight = appShell && appShell.getBoundingClientRect().height
+      ? appShell.getBoundingClientRect().height
+      : window.innerHeight;
+    if (frozenHeight) root.style.setProperty('--app-height', `${Math.round(frozenHeight)}px`);
+    root.classList.add(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
+    root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
+    return true;
+  }
+
+  function refreshAppHeightAfterGraphLabelKeyboard() {
+    if (typeof window === 'undefined') return;
+    const root = getGraphLabelKeyboardRoot();
+    const viewportHeight = window.visualViewport && window.visualViewport.height
+      ? window.visualViewport.height
+      : window.innerHeight;
+    if (root && viewportHeight) root.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+  }
+
+  function endGraphLabelKeyboardMode() {
+    const root = getGraphLabelKeyboardRoot();
+    if (!root) return;
+    root.classList.remove(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
+    root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
+    window.requestAnimationFrame(refreshAppHeightAfterGraphLabelKeyboard);
+  }
+
+  function updateGraphLabelKeyboardPan(input) {
+    if (!input || !isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return;
+    const root = getGraphLabelKeyboardRoot();
+    if (!root || !root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
+
+    const viewport = window.visualViewport;
+    const viewportBottom = (viewport.offsetTop || 0) + viewport.height;
+    const currentPan = getCurrentGraphLabelKeyboardPan(root);
+    const labelRect = input.getBoundingClientRect();
+    const unpannedLabelBottom = labelRect.bottom - currentPan;
+    const nextPan = Math.min(0, viewportBottom - GRAPH_LABEL_KEYBOARD_PAN_GAP - unpannedLabelBottom);
+    const keyboardHeight = Math.max(0, window.innerHeight - viewportBottom);
+    const maxPan = -Math.min(Math.max(keyboardHeight, 0), window.innerHeight * 0.55);
+    const boundedPan = clamp(nextPan, maxPan, 0);
+    root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, `${Math.round(boundedPan)}px`);
+  }
+
   function canPreventGraphLabelFocusScroll(input) {
     if (typeof window === 'undefined' || !window.visualViewport) return false;
     const rect = input.getBoundingClientRect();
@@ -3406,8 +3492,10 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
   }
 
   function focusGraphLabelInput(input) {
+    const keyboardModeStarted = beginGraphLabelKeyboardMode();
     if (!canPreventGraphLabelFocusScroll(input)) {
       input.focus();
+      if (keyboardModeStarted) window.requestAnimationFrame(() => updateGraphLabelKeyboardPan(input));
       return;
     }
     try {
@@ -3415,6 +3503,16 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
     } catch (error) {
       input.focus();
     }
+    if (keyboardModeStarted) window.requestAnimationFrame(() => updateGraphLabelKeyboardPan(input));
+  }
+
+  function focusLabelById(labelId) {
+    const input = labelInputRefs.current.get(labelId);
+    if (!input) return false;
+    focusGraphLabelInput(input);
+    const caretPosition = input.value.length;
+    input.setSelectionRange(caretPosition, caretPosition);
+    return true;
   }
 
   function releaseLabelSelection(nextLabelId = null) {
@@ -3441,12 +3539,31 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
     releaseArrowSelection(arrowId);
   }
 
+  function editLabelImmediately(labelId) {
+    flushSync(() => {
+      onActivate();
+      selectLabel(labelId);
+      setEditingLabelId(labelId);
+    });
+    focusLabelById(labelId);
+  }
+
   function beginLabelEditing(event, labelId) {
     event.preventDefault();
     event.stopPropagation();
-    onActivate();
-    selectLabel(labelId);
-    setEditingLabelId(labelId);
+    editLabelImmediately(labelId);
+  }
+
+  function createAndEditTextLabel(point) {
+    if (!onPoint) return;
+    const labelId = makeId('label');
+    flushSync(() => {
+      onPoint(point, { labelId });
+      releaseArrowSelection();
+      setSelectedLabelId(labelId);
+      setEditingLabelId(labelId);
+    });
+    focusLabelById(labelId);
   }
 
   function pointFromEvent(clientX, clientY, target, options = {}) {
@@ -3563,6 +3680,11 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
           // Some synthetic or interrupted pointer events cannot be captured.
         }
       }
+      return;
+    }
+
+    if (graph.mode === 'text') {
+      createAndEditTextLabel(point);
       return;
     }
 
@@ -3893,6 +4015,9 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}
+              onBlur={() => {
+                if (isEditing) endGraphLabelKeyboardMode();
+              }}
               onChange={(event) => {
                 const nextText = event.target.value;
                 const patch = { text: nextText };
@@ -3976,6 +4101,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
                   }}
                   onClick={(event) => {
                     event.stopPropagation();
+                    endGraphLabelKeyboardMode();
                     onLabelRemove(label.id);
                   }}
                 >
