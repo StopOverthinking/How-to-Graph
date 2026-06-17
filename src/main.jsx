@@ -20,7 +20,6 @@ import {
   FileText,
   Maximize2,
   Megaphone,
-  Minus,
   MousePointer2,
   PaintBucket,
   PenLine,
@@ -139,8 +138,6 @@ const COUNT_ROW_LABEL = '인원(명)';
 const PERCENTAGE_ROW_LABEL = '백분율(%)';
 const TOTAL_COLUMN_LABEL = '합계';
 const DEFAULT_GRAPH_SCALE = 5;
-const MIN_GRAPH_SCALE = 1;
-const MAX_GRAPH_SCALE = 20;
 const DIVIDER_DRAG_BAR_TOLERANCE = 8;
 const DIVIDER_DRAG_PIE_TOLERANCE = 10;
 const SHARE_VERSION = 4;
@@ -1472,7 +1469,7 @@ function App() {
               </button>
             );
           })}
-          {(QR_SHARING_ENABLED || demoMode) && (
+          {QR_SHARING_ENABLED && (
             <button className="icon-button qr-nav-button" type="button" data-demo-id="qr-button" onClick={() => setShareOpen(true)} title="QR 보내기 / 받기" aria-label="QR 보내기 / 받기">
               <QrCode size={21} aria-hidden="true" />
             </button>
@@ -1519,7 +1516,7 @@ function App() {
         </section>
       </main>
 
-      {(QR_SHARING_ENABLED || demoMode) && shareOpen && (
+      {QR_SHARING_ENABLED && shareOpen && (
         <ShareDialog
           state={state}
           activeTab={activeTab}
@@ -1552,7 +1549,7 @@ function getDemoOverlayScale() {
 
 function DemoOverlay() {
   const clickIdRef = useRef(0);
-  const [pointer, setPointer] = useState({ x: 86, y: 86, visible: true, pressed: false, duration: 0 });
+  const [pointer, setPointer] = useState({ x: 86, y: 86, visible: false, pressed: false, duration: 0 });
   const [clicks, setClicks] = useState([]);
   const [spotlight, setSpotlight] = useState(null);
   const [callout, setCallout] = useState(null);
@@ -1660,7 +1657,7 @@ function DemoOverlay() {
         setPointer((current) => ({ ...current, visible: !!visible, duration: 120 }));
       },
       reset() {
-        setPointer({ x: 86, y: 86, visible: true, pressed: false, duration: 0 });
+        setPointer({ x: 86, y: 86, visible: false, pressed: false, duration: 0 });
         setClicks([]);
         setSpotlight(null);
         setCallout(null);
@@ -1739,7 +1736,7 @@ function getDemoCalloutStyle(callout, spotlight) {
   const maxWidth = Number.isFinite(requestedWidth) ? requestedWidth : 360;
   const width = Math.min(maxWidth, Math.max(260, viewportWidth - margin * 2));
   const requestedHeight = Number(callout.height);
-  const height = Number.isFinite(requestedHeight) ? Math.max(44, requestedHeight) : 104;
+  const height = Number.isFinite(requestedHeight) ? Math.max(88, requestedHeight) : 132;
   const placement = callout.placement || 'auto';
   const requestedGap = Number(callout.gap);
   const targetGap = Number.isFinite(requestedGap) ? Math.max(0, requestedGap) : margin;
@@ -2193,50 +2190,6 @@ function getPresentationText(value, fallback) {
 function getPresentationTotalText(value) {
   const text = getPresentationText(value, '(합계)');
   return text.replace(/\s*명\s*$/, '').trim() || '(합계)';
-}
-
-function GraphScaleControl({ scale, onConfirm }) {
-  const currentScale = normalizeGraphScale(scale);
-  const canDecrease = currentScale > MIN_GRAPH_SCALE;
-  const canIncrease = currentScale < MAX_GRAPH_SCALE;
-
-  function changeScale(delta) {
-    const nextScale = normalizeGraphScale(currentScale + delta);
-    if (nextScale !== currentScale) onConfirm(nextScale);
-  }
-
-  return (
-    <div className="scale-control">
-      <div className="scale-control-top">
-        <span>눈금 크기</span>
-        <div className="scale-stepper" role="group" aria-label={`눈금 크기 ${currentScale}%`}>
-          <button
-            className="scale-step-button"
-            type="button"
-            data-demo-id="scale-decrease"
-            onClick={() => changeScale(-1)}
-            disabled={!canDecrease}
-            title="눈금 줄이기"
-            aria-label="눈금 줄이기"
-          >
-            <Minus size={16} aria-hidden="true" />
-          </button>
-          <output className="scale-value" aria-live="polite">{currentScale}%</output>
-          <button
-            className="scale-step-button"
-            type="button"
-            data-demo-id="scale-increase"
-            onClick={() => changeScale(1)}
-            disabled={!canIncrease}
-            title="눈금 키우기"
-            aria-label="눈금 키우기"
-          >
-            <Plus size={16} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function ReportDialog({ plan, table, graph, onClose }) {
@@ -3120,7 +3073,6 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
   const activeGraphLabel = getGraphTypeLabel(activeType);
   const canUndoGraphAction = Array.isArray(activeDrawing.undoStack) && activeDrawing.undoStack.length > 0;
   const presentationSentence = makeGraphPresentationSentence(plan, table);
-  const demoMode = isDemoModeEnabled();
 
   function setGraph(patch) {
     onChange((currentGraph) => {
@@ -3281,17 +3233,6 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
               { value: 'pie', label: '원그래프', icon: Circle }
             ]}
           />
-
-          {demoMode && (
-            <GraphScaleControl
-              scale={graphState.scale}
-              onConfirm={(nextScale) => {
-                if (nextScale !== normalizeGraphScale(graphState.scale)) {
-                  setGraph({ scale: nextScale });
-                }
-              }}
-            />
-          )}
 
           <SectionTitle icon={MousePointer2} title="작업 모드" />
           <SegmentedControl
@@ -5127,12 +5068,8 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function normalizeGraphScale(value, fallback = DEFAULT_GRAPH_SCALE) {
-  if (!isDemoModeEnabled()) return DEFAULT_GRAPH_SCALE;
-  const safeFallback = clamp(Math.round(Number(fallback)) || DEFAULT_GRAPH_SCALE, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
-  const scale = Math.round(Number(value));
-  if (!Number.isFinite(scale)) return safeFallback;
-  return clamp(scale, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+function normalizeGraphScale() {
+  return DEFAULT_GRAPH_SCALE;
 }
 
 function makeGraphTicks(scale, includeEnd = false) {

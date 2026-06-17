@@ -49,10 +49,12 @@ const tableFillTiming = {
 const tableFillFinalAfterMs = 500;
 const tableFillEndAfterMs = 500;
 const tableCalloutGap = 6;
-const tableCalloutHeight = 58;
+const tableCalloutHeight = 116;
 const graphExplanationMs = 3000;
 const graphStepAfterMs = 360;
+const graphDemoTimingScale = 0.75;
 const defaultGraphLabelWidth = 88;
+const mainGraphLabelWidth = 112;
 const barGraphViewBoxHeight = 36;
 const barGraphBox = { left: 8, top: 10, width: 84, height: 14 };
 const pieGraphCircle = { cx: 50, cy: 50, radius: 38 };
@@ -266,6 +268,37 @@ function assertNoTrailingGraphLabelNewline(type) {
   }
 }
 
+async function assertRenderedGraphLabelsHaveNoTrailingNewline(page, type) {
+  const selector = `${graphCanvasSelector(type)} .graph-floating-label`;
+  const values = await page.locator(selector).evaluateAll((labels) => (
+    labels.map((label) => label.value || label.textContent || '')
+  ));
+  const badIndex = values.findIndex((value) => /[\r\n]$/.test(String(value || '')));
+  if (badIndex !== -1) {
+    throw new Error(`Rendered graph demo label has a trailing newline: ${type} label ${badIndex + 1}`);
+  }
+}
+
+async function assertRenderedGraphLabelsUseExpectedRows(page, type) {
+  const selector = `${graphCanvasSelector(type)} .graph-floating-label`;
+  const rows = await page.locator(selector).evaluateAll((labels) => (
+    labels.map((label, index) => {
+      const value = label.value || label.textContent || '';
+      const expectedRows = value ? value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').length : 1;
+      return {
+        index: index + 1,
+        value,
+        expectedRows,
+        actualRows: label.rows || 1
+      };
+    })
+  ));
+  const badLabel = rows.find((label) => label.value && label.actualRows > label.expectedRows);
+  if (badLabel) {
+    throw new Error(`Rendered graph demo label uses extra rows: ${type} label ${badLabel.index} expected ${badLabel.expectedRows}, got ${badLabel.actualRows}`);
+  }
+}
+
 function timingScale(options = {}) {
   return parsePositiveNumber(options.timingScale, 1);
 }
@@ -274,6 +307,16 @@ function scaledTiming(value, options = {}, minimum = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return value;
   return Math.max(minimum, Math.round(numeric * timingScale(options)));
+}
+
+function scalePlainTimingOptions(options = {}, scaleOptions = {}) {
+  const next = { ...options };
+  ['after', 'moveDuration', 'clickDuration', 'dragDuration', 'delay', 'duration'].forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(options, key)) {
+      next[key] = scaledTiming(options[key], scaleOptions, 0);
+    }
+  });
+  return next;
 }
 
 function createTwoItemPlanState() {
@@ -342,7 +385,7 @@ function createBeverageTableState() {
     },
     graph: {
       ...state.graph,
-      scale: 10,
+      scale: 5,
       mode: 'divide',
       activeType: 'bar'
     }
@@ -373,7 +416,7 @@ function createCompletedBeverageGraphState() {
     ...state,
     graph: {
       ...state.graph,
-      scale: 10,
+      scale: 5,
       mode: 'arrow',
       activeColor: demoGraphColors[0],
       activeType: 'pie',
@@ -700,7 +743,7 @@ async function typeGraphLabelLocator(page, label, text, options = {}) {
   let current = '';
   for (const character of Array.from(labelText)) {
     current += character;
-    if (current.endsWith('\n')) {
+    if (/[\r\n]$/.test(current)) {
       await wait(keyDelay);
       continue;
     }
@@ -718,6 +761,7 @@ async function typeGraphLabelLocator(page, label, text, options = {}) {
   await page.waitForTimeout(30);
   const typedValue = await label.evaluate((element) => element.value);
   if (typedValue !== labelText) throw new Error(`Graph label typing failed: expected "${labelText}", got "${typedValue}".`);
+  if (/[\r\n]$/.test(typedValue)) throw new Error(`Graph label typing left a trailing newline: "${typedValue}".`);
   await logStep(`graph: type label done "${labelText.replace(/\n/g, ' / ')}"`);
   await page.waitForTimeout(options.after ?? 240);
 }
@@ -749,7 +793,8 @@ async function addGraphLabel(page, type, location, text, options = {}) {
   let current = '';
   for (const character of Array.from(labelText)) {
     current += character;
-    if (current.endsWith('\n')) {
+    if (/[\r\n]$/.test(current)) {
+      await assertRenderedGraphLabelsHaveNoTrailingNewline(page, type);
       await wait(keyDelay);
       continue;
     }
@@ -762,6 +807,8 @@ async function addGraphLabel(page, type, location, text, options = {}) {
 
   await setGraphAnnotations(page, type, { after: 0 });
   assertNoTrailingGraphLabelNewline(type);
+  await assertRenderedGraphLabelsHaveNoTrailingNewline(page, type);
+  await assertRenderedGraphLabelsUseExpectedRows(page, type);
   await page.waitForTimeout(scaledTiming(options.after ?? 220, options, 40));
 }
 
@@ -835,7 +882,7 @@ async function addMainGraphLabels(page, type, options = {}) {
       percent: (segment.start + segment.end) / 2,
       radius: type === 'pie' ? pieGraphCircle.radius * 0.42 : undefined,
       yRatio: 0.46
-    }, `${segment.label}\n(${segment.percent}%)`, options);
+    }, `${segment.label}\n(${segment.percent}%)`, { ...options, width: options.width || mainGraphLabelWidth });
   }
 }
 
@@ -860,9 +907,10 @@ async function addNarrowSegmentLabelAndArrow(page, type, options = {}) {
 }
 
 function makePreparedGraphLabel(type, index, text, point, options = {}) {
+  const labelText = normalizeDemoGraphLabelText(text);
   return {
     id: `${type}-label-${index + 1}`,
-    text,
+    text: labelText,
     x: point.canvas.x,
     y: point.canvas.y,
     width: options.width || defaultGraphLabelWidth,
@@ -893,22 +941,23 @@ async function prepareCompletedGraphAnnotations(page) {
         type,
         labels.length,
         `${segment.label}\n(${segment.percent}%)`,
-        point
+        point,
+        { width: mainGraphLabelWidth }
       ));
       await logStep(`interpret: ${type} label ${segment.label}`);
     }
 
     const outsideLocation = type === 'pie'
-      ? { canvas: { x: 36, y: 16 } }
-      : { canvas: { x: 93, y: 27 } };
+      ? { canvas: { x: 38, y: 8 } }
+      : { canvas: { x: 96, y: 25 } };
     const outsidePoint = await getGraphLocationPoints(page, type, outsideLocation);
     labels.push(makePreparedGraphLabel(type, labels.length, '기타\n(10%)', outsidePoint));
 
     const arrowStart = type === 'pie'
-      ? await getGraphLocationPoints(page, type, { canvas: { x: 42, y: 22 } })
-      : await getGraphLocationPoints(page, type, { canvas: { x: 91, y: 31 } });
+      ? await getGraphLocationPoints(page, type, { canvas: { x: 43, y: 14 } })
+      : await getGraphLocationPoints(page, type, { canvas: { x: 94, y: 30 } });
     const arrowEnd = type === 'pie'
-      ? await getGraphLocationPoints(page, type, { canvas: { x: 46.5, y: 34 } })
+      ? await getGraphLocationPoints(page, type, { canvas: { x: 46.5, y: 28 } })
       : await getGraphLocationPoints(page, type, { percent: 96, yRatio: 0.5 });
 
     graphAnnotationState[type] = {
@@ -922,6 +971,7 @@ async function prepareCompletedGraphAnnotations(page) {
       }]
     };
     await setGraphAnnotations(page, type, { after: 160 });
+    await assertRenderedGraphLabelsUseExpectedRows(page, type);
     await logStep(`interpret: ${type} annotations applied`);
   }
   await page.waitForTimeout(240);
@@ -929,9 +979,9 @@ async function prepareCompletedGraphAnnotations(page) {
   await page.waitForTimeout(160);
 }
 
-async function saveReportDownload(page) {
+async function saveReportDownload(page, options = {}) {
   const downloadPromise = page.waitForEvent('download', { timeout: 12000 }).catch(() => null);
-  await clickDemoId(page, 'report-save', { after: 600 });
+  await clickDemoId(page, 'report-save', scalePlainTimingOptions({ after: 600 }, options));
   const download = await downloadPromise;
   if (!download) throw new Error('Report image download did not start.');
 
@@ -943,7 +993,7 @@ async function saveReportDownload(page) {
     if (candidate !== page && !candidate.isClosed()) await candidate.close().catch(() => {});
   }
   await page.bringToFront();
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(scaledTiming(500, options, 0));
 }
 
 async function makeMp4WithSound(webmPath, events) {
@@ -1213,17 +1263,6 @@ async function runPlanDemo(page) {
   await page.waitForTimeout(3000);
   await callDemo(page, 'clearSpotlight');
   await page.waitForTimeout(300);
-
-  await showDemoSpotlight(page, {
-    selector: selectorForDemoId('qr-button'),
-    title: '모둠장이 작성한 계획을 모두가 공유',
-    placement: 'bottom'
-  });
-  await page.waitForTimeout(3000);
-  await callDemo(page, 'clearSpotlight');
-  await clickDemoId(page, 'qr-button', { after: 1200 });
-  await page.locator('.share-dialog').waitFor({ state: 'visible', timeout: 8000 });
-  await page.waitForTimeout(800);
 }
 
 async function runTableDemo(page) {
@@ -1309,50 +1348,55 @@ async function runTableDemo(page) {
 
 async function runGraphDemo(page) {
   resetGraphAnnotationState();
-  const pieFastTiming = { timingScale: 0.5 };
+  const graphTiming = { timingScale: graphDemoTimingScale };
+  const pieFastTiming = { timingScale: graphDemoTimingScale * 0.5 };
+  const clickGraphDemoId = (id, options = {}) => clickDemoId(page, id, scalePlainTimingOptions(options, graphTiming));
+  const spotlightGraphSelector = (selector, title, options = {}) => spotlightSelector(page, selector, title, {
+    ...options,
+    duration: scaledTiming(options.duration ?? graphExplanationMs, graphTiming, 0)
+  });
+  const spotlightGraphDemoId = (id, title, options = {}) => spotlightGraphSelector(selectorForDemoId(id), title, options);
+  const clearGraphSpotlight = () => clearDemoSpotlight(page, scaledTiming(180, graphTiming, 0));
   await logStep('graph: seed and open table tab');
   await seedBeverageTableState(page);
   await page.goto(`${seededDemoUrl}&demoTab=table`, { waitUntil: 'networkidle' });
   await applyDemoViewportZoom(page);
   await waitForDemoReady(page);
   await page.locator(selectorForDemoId('tab-table')).waitFor({ state: 'visible', timeout: 8000 });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(scaledTiming(300, graphTiming, 0));
   markDemoStart();
 
   await logStep('graph: open graph tab');
-  await spotlightDemoId(page, 'tab-graph', '그래프 그리기 시작', { placement: 'bottom' });
-  await clearDemoSpotlight(page);
-  await clickDemoId(page, 'tab-graph', { after: 1000 });
+  await spotlightGraphDemoId('tab-graph', '그래프 그리기 시작', { placement: 'bottom' });
+  await clearGraphSpotlight();
+  await clickGraphDemoId('tab-graph', { after: 1000 });
 
-  await logStep('graph: explain type and scale');
-  await spotlightSelector(page, '.graph-type-control', '그래프 종류 선택', { placement: 'right' });
-  await clearDemoSpotlight(page);
-
-  await spotlightSelector(page, '.scale-control', '눈금 크기 선택', { placement: 'right' });
-  await clearDemoSpotlight(page);
+  await logStep('graph: explain type');
+  await spotlightGraphSelector('.graph-type-control', '그래프 종류 선택', { placement: 'right' });
+  await clearGraphSpotlight();
 
   await logStep('graph: draw bar dividers');
-  await spotlightDemoId(page, 'graph-mode-control-divide', '그래프 칸 나누기', { placement: 'right' });
-  await clearDemoSpotlight(page);
-  await clickDemoId(page, 'graph-mode-control-divide', { after: 260 });
-  await drawGraphDividers(page, 'bar');
+  await spotlightGraphDemoId('graph-mode-control-divide', '그래프 칸 나누기', { placement: 'right' });
+  await clearGraphSpotlight();
+  await clickGraphDemoId('graph-mode-control-divide', { after: 260 });
+  await drawGraphDividers(page, 'bar', graphTiming);
 
   await logStep('graph: paint bar');
-  await spotlightDemoId(page, 'graph-mode-control-paint', '색칠하기', { placement: 'right' });
-  await clearDemoSpotlight(page);
-  await clickDemoId(page, 'graph-mode-control-paint', { after: 320 });
-  await paintGraphSegments(page, 'bar');
+  await spotlightGraphDemoId('graph-mode-control-paint', '색칠하기', { placement: 'right' });
+  await clearGraphSpotlight();
+  await clickGraphDemoId('graph-mode-control-paint', { after: 320 });
+  await paintGraphSegments(page, 'bar', graphTiming);
 
   await logStep('graph: label bar');
-  await spotlightDemoId(page, 'graph-mode-control-text', '항목 이름과 백분율 적기', { placement: 'right' });
-  await clearDemoSpotlight(page);
-  await clickDemoId(page, 'graph-mode-control-text', { after: 260 });
-  await addMainGraphLabels(page, 'bar');
+  await spotlightGraphDemoId('graph-mode-control-text', '항목 이름과 백분율 적기', { placement: 'right' });
+  await clearGraphSpotlight();
+  await clickGraphDemoId('graph-mode-control-text', { after: 260 });
+  await addMainGraphLabels(page, 'bar', graphTiming);
 
   await logStep('graph: arrow bar');
-  await spotlightDemoId(page, 'graph-mode-control-arrow', '좁은 칸은 화살표 사용', { placement: 'right' });
-  await clearDemoSpotlight(page);
-  await addNarrowSegmentLabelAndArrow(page, 'bar');
+  await spotlightGraphDemoId('graph-mode-control-arrow', '좁은 칸은 화살표 사용', { placement: 'right' });
+  await clearGraphSpotlight();
+  await addNarrowSegmentLabelAndArrow(page, 'bar', graphTiming);
 
   await logStep('graph: draw pie');
   await clickDemoId(page, 'graph-type-control-pie', {
@@ -1379,18 +1423,15 @@ async function runGraphDemo(page) {
   });
   await addMainGraphLabels(page, 'pie', pieFastTiming);
   await addNarrowSegmentLabelAndArrow(page, 'pie', pieFastTiming);
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(scaledTiming(2000, graphTiming, 0));
 
   await logStep('graph: download report image');
-  await spotlightDemoId(page, 'graph-report', '완성 후 보고서 다운로드', { placement: 'right' });
-  await clearDemoSpotlight(page);
-  await clickDemoId(page, 'graph-report', { after: 1000 });
-  await saveReportDownload(page);
-  await clickDemoId(page, 'report-close', { after: 700 });
+  await spotlightGraphDemoId('graph-report', '완성 후 보고서 다운로드', { placement: 'right' });
+  await clearGraphSpotlight();
+  await clickGraphDemoId('graph-report', { after: 1000 });
+  await saveReportDownload(page, graphTiming);
+  await clickGraphDemoId('report-close', { after: 700 });
 
-  await logStep('graph: final share callout');
-  await spotlightDemoId(page, 'graph-share-link', '다운로드한 보고서를 띵커벨에 제출', { placement: 'right' });
-  await page.waitForTimeout(700);
 }
 
 async function runInterpretDemo(page) {

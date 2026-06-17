@@ -1,10 +1,12 @@
 @import url('https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@200..900&family=Dongle:wght@300;400;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Gowun+Dodum&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
 
 :root {
   --body-font: "Chiron GoRound TC", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
   --menu-font: "Dongle", "Chiron GoRound TC", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   --demo-font: "Gowun Dodum", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  --report-title-font: "Jua", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
   --menu-font-size: 25px;
   --page: #f7f8f4;
   --ink: #1f2d3d;
@@ -850,63 +852,6 @@ textarea.text-input:focus {
 .graph-type-control,
 .graph-mode-control {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.scale-control {
-  margin-bottom: var(--tight-gap);
-}
-
-.scale-control-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 124px;
-  grid-gap: 8px;
-  align-items: center;
-}
-
-.scale-control-top span {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.scale-stepper {
-  display: grid;
-  grid-template-columns: 34px minmax(42px, 1fr) 34px;
-  grid-gap: 4px;
-  align-items: center;
-  min-width: 0;
-}
-
-.scale-step-button,
-.scale-value {
-  min-height: 36px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #ffffff;
-  color: var(--ink);
-  font-weight: 700;
-}
-
-.scale-step-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  cursor: pointer;
-}
-
-.scale-step-button:disabled {
-  background: #f4f6f4;
-  color: var(--muted);
-  cursor: default;
-  opacity: 0.72;
-}
-
-.scale-value {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
 }
 
 .graph-main {
@@ -1808,7 +1753,7 @@ textarea.text-input:focus {
 .report-title {
   margin-bottom: 14px;
   color: #111111;
-  font-family: var(--body-font);
+  font-family: var(--report-title-font);
   font-size: 42px;
   font-weight: 400;
   line-height: 1.08;
@@ -2104,16 +2049,20 @@ textarea.text-input:focus {
 }
 
 .demo-callout strong {
-  font-size: 16px;
+  font-size: 32px;
   line-height: 1.2;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  line-break: strict;
 }
 
 .demo-callout span {
-  font-size: 14px;
+  font-size: 28px;
   line-height: 1.45;
   color: #364454;
   word-break: keep-all;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  line-break: strict;
 }
 
 .demo-pointer {

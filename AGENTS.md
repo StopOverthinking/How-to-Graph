@@ -99,23 +99,23 @@
 - 비디오 제작 방식은 Playwright Chromium video capture다. 출력 뷰포트와 `recordVideo.size`는 `1920x1080`, `deviceScaleFactor`는 `1`, `locale`은 `ko-KR`, 기본 headless 실행이다. `DEMO_ZOOM=1.5`에서는 앱을 `1280x720` 레이아웃으로 만든 뒤 CSS `zoom: 1.5`로 FHD 안에 직접 렌더링한다. `window.__HOW_TO_GRAPH_DEMO_VIEWPORT_ZOOM=1.5`로 데모 오버레이 좌표를 보정한다.
 - MP4 합성은 `ffmpeg-static`을 사용한다. WebM 비디오는 `recordingTrimStartMs`부터 `trim`, `setpts=PTS-STARTPTS`로 정렬하고, `libx264`, `preset slow`, `crf 15`, `+faststart`, `yuv420p`로 인코딩한다. 오디오는 48kHz stereo silence track 위에 이벤트 사운드를 `adelay`로 배치한 뒤 AAC 160k로 만들고 MP4에는 copy한다.
 - 사운드 파일은 `typing.ogg`, `click.ogg`, `highlight.ogg`이며 전체 볼륨 배율은 `1.5`다. 최종 볼륨은 타이핑 `0.42`, 클릭 `0.51`, 강조 `0.69`다. 타이핑 사운드는 공백을 제외한 글자마다 찍고, 사운드 간격은 `Math.max(32, keyDelay)`다.
-- 계획 단계 시나리오는 반드시 항목 `탄산음료`, `과일주스`, `차/커피`, `기타`와 제목 `우리 반 학생이 좋아하는 음료수 종류의 비율`을 사용한다. 설명 문구는 `표로 정리할 항목 정하기`, `표의 이름 정하기`, `계획 확인`, `모둠장이 작성한 계획을 모두가 공유`만 사용한다.
+- 계획 단계 시나리오는 반드시 항목 `탄산음료`, `과일주스`, `차/커피`, `기타`와 제목 `우리 반 학생이 좋아하는 음료수 종류의 비율`을 사용한다. 설명 문구는 `표로 정리할 항목 정하기`, `표의 이름 정하기`, `계획 확인`만 사용한다.
 - 시작 상태에서 첫 번째 항목 입력칸 오른쪽(`xRatio: 0.86`)을 클릭한다. 이 최초 클릭은 포인터 이동 `220ms`, 클릭 애니메이션 `180ms` 기본값을 사용한다. 곧바로 첫 번째 항목 입력칸을 `placement: right`로 spotlight 처리하고 `표로 정리할 항목 정하기`를 `3000ms` 표시한 뒤 `clearSpotlight`한다.
 - 항목 입력 구간은 각 입력 및 추가 동작 뒤 `500ms` 지연한다. 항목 입력은 모두 입력칸 오른쪽(`clickXRatio: 0.86`)을 클릭하고, 포인터 이동 `110ms`, 클릭 애니메이션 `90ms`, 키 입력 지연 `28ms/글자`, 타이핑 사운드 간격 `32ms/글자`를 사용한다. `탄산음료`, `과일주스`를 입력한 뒤 `plan-add-item`을 2회 클릭하고, `차/커피`, `기타`를 입력한다.
 - 항목 단계의 `다음` 버튼은 기본 `clickTarget` 경로로 클릭하고 클릭 뒤 `1200ms` 지연한다. 그 다음 제목 입력칸을 `placement: bottom`으로 spotlight 처리하고 `표의 이름 정하기`를 `3000ms` 표시한 뒤 `clearSpotlight`한다.
 - 제목 입력은 기본 `clickTarget` 경로로 입력칸을 클릭하고 `Control+A` 후 입력한다. 키 입력 지연은 `45ms/글자`, 타이핑 사운드 간격은 `45ms/글자`, 입력 뒤 지연은 `1500ms`다.
-- 제목 단계의 `다음` 버튼은 기본 `clickTarget` 경로로 클릭하고 클릭 뒤 `1000ms` 지연한다. 이후 `.plan-sheet-screen` 전체를 `placement: bottom`으로 spotlight 처리하고 `계획 확인`을 `3000ms` 표시한 뒤 `clearSpotlight`, `300ms` 대기한다. 이어서 `qr-button`을 `placement: bottom`으로 spotlight 처리하고 `모둠장이 작성한 계획을 모두가 공유`를 `3000ms` 표시한 뒤 `clearSpotlight`한다. QR 버튼은 기본 `clickTarget` 경로로 클릭하고 `1200ms` 대기한 다음 `.share-dialog`가 보이는지 확인하고 `800ms` 더 대기한다.
+- 제목 단계의 `다음` 버튼은 기본 `clickTarget` 경로로 클릭하고 클릭 뒤 `1000ms` 지연한다. 이후 `.plan-sheet-screen` 전체를 `placement: bottom`으로 spotlight 처리하고 `계획 확인`을 `3000ms` 표시한 뒤 `clearSpotlight`, 마지막으로 `300ms` 대기한다.
 - 오버레이의 기본 spotlight padding은 `12px`, radius는 `10px`, spotlight 전환은 `220ms`다. 클릭 ring은 `720ms`, target glow는 `560ms`, callout 위치 전환은 `220ms`다.
-- 설명 텍스트박스는 `min-width: 260px`, `padding: 14px 16px`, `border-radius: 8px`, `background: #f7f8f4`, `font-family: Gowun Dodum`, 가운데 정렬이다. 그림자는 `0 16px 34px rgba(10, 16, 24, 0.20)`, `0 3px 10px rgba(10, 16, 24, 0.10)`, `inset 0 1px 0 rgba(255,255,255,0.72)`만 사용한다.
+- 설명 텍스트박스는 `min-width: 260px`, `padding: 14px 16px`, `border-radius: 8px`, `background: #f7f8f4`, `font-family: Gowun Dodum`, 가운데 정렬이며 제목 글자는 `32px`, 본문 글자는 `28px`다. 설명 팝업 텍스트는 단어 단위로 줄바꿈되게 하고, `문장을`이 `문`/`장을`처럼 단어 안에서 갈라지지 않아야 한다. CSS는 제목과 본문 모두 `word-break: keep-all`, `overflow-wrap: normal`, `line-break: strict`를 사용하며, 줄이 길면 문구나 `calloutWidth`를 조정한다. 그림자는 `0 16px 34px rgba(10, 16, 24, 0.20)`, `0 3px 10px rgba(10, 16, 24, 0.10)`, `inset 0 1px 0 rgba(255,255,255,0.72)`만 사용한다.
 - 발표용 포인터는 `52x52px` 컨테이너 안에 `MousePointer2` `44px`를 렌더링한다. 포인터 색은 `#cb838c`, 흰색 테두리 stroke width는 `1.8`, 기본 위치 보정은 `translate(-7px, -5px)`, 클릭 중 scale은 `0.9`다.
-- 기준 검증은 MP4가 `1920x1080`, `25fps`, H.264 video, AAC audio를 포함하고 `ffmpeg -v error -i <mp4> -f null -`가 성공하는 것이다. 대표 프레임은 첫 항목 설명, 제목 설명, 계획 확인, QR 공유 설명, 공유 창 구간을 추출해 요소 크기, spotlight 위치, 포인터 위치, 설명 텍스트박스 그림자, 공유 창 표시를 눈으로 확인한다.
+- 기준 검증은 MP4가 `1920x1080`, `25fps`, H.264 video, AAC audio를 포함하고 `ffmpeg -v error -i <mp4> -f null -`가 성공하는 것이다. 대표 프레임은 첫 항목 설명, 제목 설명, 계획 확인 구간을 추출해 요소 크기, spotlight 위치, 포인터 위치, 설명 텍스트박스 그림자를 눈으로 확인한다.
 
 ### 그래프 만들기 발표 영상 기준값
 
 - 마지막 승인본과 같은 그래프 만들기 영상을 만들 때는 PowerShell에서 `$env:DEMO_WIDTH='1920'; $env:DEMO_HEIGHT='1080'; $env:DEMO_ZOOM='1.5'; $env:DEMO_CAPTURE='video'; npm run demo:record:graph`를 사용한다.
 - 녹화는 표 탭에서 시작하며 localStorage를 제목 `우리 반 학생이 좋아하는 음료수 종류의 비율`, 항목 `탄산음료`, `과일주스`, `차/커피`, `기타`, 인원 `8`, `6`, `4`, `2`, `20`, 백분율 `40`, `30`, `20`, `10`, `100`으로 seed한다.
-- 그래프 눈금 크기는 `10%`이며 띠그래프와 원그래프 모두 구분선 `40%`, `70%`, `90%`를 사용한다.
-- 설명 문구는 순서대로 `그래프 그리기 시작`, `그래프 종류 선택`, `눈금 크기 선택`, `그래프 칸 나누기`, `색칠하기`, `항목 이름과 백분율 적기`, `좁은 칸은 화살표 사용`, `완성 후 보고서 다운로드`, `다운로드한 보고서를 띵커벨에 제출`만 사용한다.
+- 그래프 눈금은 앱 기본값을 사용하며 띠그래프와 원그래프 모두 구분선 `40%`, `70%`, `90%`를 사용한다.
+- 설명 문구는 순서대로 `그래프 그리기 시작`, `그래프 종류 선택`, `그래프 칸 나누기`, `색칠하기`, `항목 이름과 백분율 적기`, `좁은 칸은 화살표 사용`, `완성 후 보고서 다운로드`만 사용한다.
 - 라벨은 `탄산음료\n(40%)`, `과일주스\n(30%)`, `차/커피\n(20%)`, `기타\n(10%)` 형식으로 넣는다. 좁은 `기타` 칸은 칸 밖 라벨과 화살표를 사용한다.
 - 보고서 장면은 보고서 이미지 버튼을 하이라이트한 뒤 실제 이미지 저장을 실행하고 창을 닫는다.
 - 완성 영상과 보고서 PNG 같은 결과물은 `output/playwright/demo/graph/<timestamp>/` 아래에 생성되며 Git에는 포함하지 않는다. 재현용 스크립트, 데모 사운드, 패키지 의존성, 데모 모드 UI 코드만 커밋한다.
