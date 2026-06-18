@@ -37,7 +37,7 @@ import './styles.css';
 
 const TABS = [
   { id: 'plan', label: '계획', icon: PenLine },
-  { id: 'table', label: '표 그리기', icon: Table2 },
+  { id: 'table', label: '표로 정리하기', icon: Table2 },
   { id: 'graph', label: '그래프 그리기', icon: PieChart },
   { id: 'interpret', label: '해석하기', icon: FileText }
 ];
@@ -165,7 +165,7 @@ const SHARE_SCOPE_CODES = { plan: 'p', table: 't', graph: 'g', interpret: 'i', f
 const SHARE_SCOPES_BY_CODE = { p: 'plan', t: 'table', g: 'graph', i: 'interpret', a: 'full' };
 const SHARE_SCOPE_LABELS = {
   plan: '계획하기',
-  table: '표 그리기',
+  table: '표로 정리하기',
   graph: '그래프 그리기',
   interpret: '해석하기',
   full: '전체'
@@ -340,7 +340,30 @@ function getSentenceBlankWidth(value) {
     if (character === ' ') return total + 0.35;
     return total + (/^[\x00-\x7F]$/.test(character) ? 0.62 : 1);
   }, 0);
-  return Math.ceil(textUnits * 16 + 18);
+  return Math.ceil(textUnits * 24 + 22);
+}
+
+function getParticleBaseCharacter(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    const character = text[index];
+    if (!/[\s.,!?()[\]{}'"“”‘’]/.test(character)) return character;
+  }
+  return '';
+}
+
+function hasFinalConsonant(value) {
+  const character = getParticleBaseCharacter(value);
+  if (!character) return true;
+  const code = character.charCodeAt(0);
+  if (code >= 0xac00 && code <= 0xd7a3) return (code - 0xac00) % 28 !== 0;
+  if (/^[013678]$/.test(character)) return true;
+  if (/^[2459]$/.test(character)) return false;
+  return false;
+}
+
+function getKoreanParticle(value, withFinalConsonant, withoutFinalConsonant) {
+  return hasFinalConsonant(value) ? withFinalConsonant : withoutFinalConsonant;
 }
 
 function normalizeStoredGraphMode(value) {
@@ -425,7 +448,7 @@ function getSharePayloadLabel(payload) {
 function getSharePayloadDescription(payload) {
   const scope = payload && payload.scope;
   if (scope === 'plan') return '계획';
-  if (scope === 'table') return '표 그리기';
+  if (scope === 'table') return '표로 정리하기';
   if (scope === 'graph') return '그래프 그리기';
   if (scope === 'interpret') return '해석';
   if (scope === 'full') return '전체';
@@ -1994,6 +2017,18 @@ function PlanWorkspace({
                 placeholder="표 이름"
                 aria-label="표 이름"
               />
+            </div>
+            <div className="plan-step-actions">
+              <button
+                className="plan-previous-button"
+                type="button"
+                onClick={() => goToStep(1, itemsRef)}
+                title="이전"
+                aria-label="이전: 항목"
+              >
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>이전</span>
+              </button>
               <button
                 className="plan-next-button"
                 type="button"
@@ -2011,18 +2046,6 @@ function PlanWorkspace({
               >
                 <span>다음</span>
                 <ChevronRight size={18} aria-hidden="true" />
-              </button>
-            </div>
-            <div className="plan-step-actions">
-              <button
-                className="plan-previous-button"
-                type="button"
-                onClick={() => goToStep(1, itemsRef)}
-                title="이전"
-                aria-label="이전: 항목"
-              >
-                <ChevronLeft size={18} aria-hidden="true" />
-                <span>이전</span>
               </button>
             </div>
           </section>
@@ -3065,6 +3088,88 @@ function isIosSafari() {
   return isAppleMobile && /WebKit/.test(userAgent) && /Safari/.test(userAgent) && !isOtherIosBrowser;
 }
 
+function getSoftwareKeyboardPanRoot() {
+  return typeof document === 'undefined' ? null : document.documentElement;
+}
+
+function getCurrentSoftwareKeyboardPan(root) {
+  if (!root) return 0;
+  const currentPan = Number.parseFloat(root.style.getPropertyValue(GRAPH_LABEL_KEYBOARD_PAN_VAR));
+  return Number.isFinite(currentPan) ? currentPan : 0;
+}
+
+function beginSoftwareKeyboardPanMode() {
+  if (!isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return false;
+  const root = getSoftwareKeyboardPanRoot();
+  if (!root) return false;
+  const appShell = document.querySelector('.app-shell');
+  const frozenHeight = appShell && appShell.getBoundingClientRect().height
+    ? appShell.getBoundingClientRect().height
+    : window.innerHeight;
+  if (frozenHeight) root.style.setProperty('--app-height', `${Math.round(frozenHeight)}px`);
+  root.classList.add(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
+  root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
+  return true;
+}
+
+function refreshAppHeightAfterSoftwareKeyboardPan() {
+  if (typeof window === 'undefined') return;
+  const root = getSoftwareKeyboardPanRoot();
+  const viewportHeight = window.visualViewport && window.visualViewport.height
+    ? window.visualViewport.height
+    : window.innerHeight;
+  if (root && viewportHeight) root.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+}
+
+function endSoftwareKeyboardPanMode() {
+  const root = getSoftwareKeyboardPanRoot();
+  if (!root) return;
+  root.classList.remove(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
+  root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
+  if (typeof window !== 'undefined') window.requestAnimationFrame(refreshAppHeightAfterSoftwareKeyboardPan);
+}
+
+function updateSoftwareKeyboardPan(input) {
+  if (!input || !isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return;
+  const root = getSoftwareKeyboardPanRoot();
+  if (!root || !root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
+
+  const viewport = window.visualViewport;
+  const viewportBottom = (viewport.offsetTop || 0) + viewport.height;
+  const currentPan = getCurrentSoftwareKeyboardPan(root);
+  const inputRect = input.getBoundingClientRect();
+  const unpannedInputBottom = inputRect.bottom - currentPan;
+  const nextPan = Math.min(0, viewportBottom - GRAPH_LABEL_KEYBOARD_PAN_GAP - unpannedInputBottom);
+  const keyboardHeight = Math.max(0, window.innerHeight - viewportBottom);
+  const maxPan = -Math.min(Math.max(keyboardHeight, 0), window.innerHeight * 0.55);
+  const boundedPan = clamp(nextPan, maxPan, 0);
+  root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, `${Math.round(boundedPan)}px`);
+}
+
+function canPreventSoftwareKeyboardFocusScroll(input) {
+  if (typeof window === 'undefined' || !window.visualViewport) return false;
+  const rect = input.getBoundingClientRect();
+  const viewportHeight = window.visualViewport.height || window.innerHeight;
+  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return false;
+  if (rect.top < 0 || rect.height <= 0) return false;
+  return rect.bottom <= viewportHeight * LABEL_PREVENT_SCROLL_SAFE_VIEWPORT_RATIO;
+}
+
+function focusInputWithSoftwareKeyboardPan(input) {
+  const keyboardModeStarted = beginSoftwareKeyboardPanMode();
+  if (!canPreventSoftwareKeyboardFocusScroll(input)) {
+    input.focus();
+    if (keyboardModeStarted) window.requestAnimationFrame(() => updateSoftwareKeyboardPan(input));
+    return;
+  }
+  try {
+    input.focus({ preventScroll: true });
+  } catch (error) {
+    input.focus();
+  }
+  if (keyboardModeStarted) window.requestAnimationFrame(() => updateSoftwareKeyboardPan(input));
+}
+
 function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
   const graphState = normalizeGraphState(graph);
   const activeType = normalizeGraphType(graphState.activeType, 'bar');
@@ -3335,6 +3440,12 @@ function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
 
 function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
   const currentAnswers = normalizeInterpretationAnswers(answers);
+  const mostSubjectParticle = getKoreanParticle(currentAnswers.mostSubject, '은', '는');
+  const leastSubjectParticle = getKoreanParticle(currentAnswers.leastSubject, '은', '는');
+  const compareMoreLeftParticle = getKoreanParticle(currentAnswers.compareMoreLeftItem, '을', '를');
+  const compareMoreRightParticle = getKoreanParticle(currentAnswers.compareMoreRightItem, '을', '를');
+  const compareLessLeftParticle = getKoreanParticle(currentAnswers.compareLessLeftItem, '을', '를');
+  const compareLessRightParticle = getKoreanParticle(currentAnswers.compareLessRightItem, '을', '를');
 
   function setAnswer(key, value) {
     onAnswerChange({ [key]: value });
@@ -3350,70 +3461,80 @@ function InterpretationWorkspace({ graph, answers, onAnswerChange, onFinish }) {
         <ol className="interpret-sentence-list" data-demo-id="interpret-sentence-list">
           <li className="interpret-sentence">
             <span className="sentence-number">1</span>
-            <span>가장 많은 학생이 좋아하는</span>
-            <SentenceBlank
-              value={currentAnswers.mostSubject}
-              onChange={(value) => setAnswer('mostSubject', value)}
-              label="1번 대상"
-            />
-            <span>은</span>
-            <SentenceBlank
-              value={currentAnswers.mostAnswer}
-              onChange={(value) => setAnswer('mostAnswer', value)}
-              label="1번 답"
-            />
-            <span>입니다.</span>
+            <span className="interpret-sentence-line">가장 많은 학생이 좋아하는</span>
+            <span className="interpret-sentence-line">
+              <SentenceBlank
+                value={currentAnswers.mostSubject}
+                onChange={(value) => setAnswer('mostSubject', value)}
+                label="1번 대상"
+              />
+              <span className="sentence-particle">{mostSubjectParticle}</span>
+              <SentenceBlank
+                value={currentAnswers.mostAnswer}
+                onChange={(value) => setAnswer('mostAnswer', value)}
+                label="1번 답"
+              />
+              <span>입니다.</span>
+            </span>
           </li>
 
           <li className="interpret-sentence">
             <span className="sentence-number">2</span>
-            <span>가장 적은 학생이 좋아하는</span>
-            <SentenceBlank
-              value={currentAnswers.leastSubject}
-              onChange={(value) => setAnswer('leastSubject', value)}
-              label="2번 대상"
-            />
-            <span>은</span>
-            <SentenceBlank
-              value={currentAnswers.leastAnswer}
-              onChange={(value) => setAnswer('leastAnswer', value)}
-              label="2번 답"
-            />
-            <span>입니다.</span>
+            <span className="interpret-sentence-line">가장 적은 학생이 좋아하는</span>
+            <span className="interpret-sentence-line">
+              <SentenceBlank
+                value={currentAnswers.leastSubject}
+                onChange={(value) => setAnswer('leastSubject', value)}
+                label="2번 대상"
+              />
+              <span className="sentence-particle">{leastSubjectParticle}</span>
+              <SentenceBlank
+                value={currentAnswers.leastAnswer}
+                onChange={(value) => setAnswer('leastAnswer', value)}
+                label="2번 답"
+              />
+              <span>입니다.</span>
+            </span>
           </li>
 
           <li className="interpret-sentence">
             <span className="sentence-number">3</span>
-            <SentenceBlank
-              value={currentAnswers.compareMoreLeftItem}
-              onChange={(value) => setAnswer('compareMoreLeftItem', value)}
-              label="3번 첫 번째 항목"
-            />
-            <span>을 좋아하는 학생은</span>
-            <SentenceBlank
-              value={currentAnswers.compareMoreRightItem}
-              onChange={(value) => setAnswer('compareMoreRightItem', value)}
-              label="3번 두 번째 항목"
-            />
-            <span>을 좋아하는 학생보다</span>
-            <span>많습니다.</span>
+            <span className="interpret-sentence-line">
+              <SentenceBlank
+                value={currentAnswers.compareMoreLeftItem}
+                onChange={(value) => setAnswer('compareMoreLeftItem', value)}
+                label="3번 첫 번째 항목"
+              />
+              <span>{compareMoreLeftParticle} 좋아하는 학생은</span>
+            </span>
+            <span className="interpret-sentence-line">
+              <SentenceBlank
+                value={currentAnswers.compareMoreRightItem}
+                onChange={(value) => setAnswer('compareMoreRightItem', value)}
+                label="3번 두 번째 항목"
+              />
+              <span>{compareMoreRightParticle} 좋아하는 학생보다 많습니다.</span>
+            </span>
           </li>
 
           <li className="interpret-sentence">
             <span className="sentence-number">4</span>
-            <SentenceBlank
-              value={currentAnswers.compareLessLeftItem}
-              onChange={(value) => setAnswer('compareLessLeftItem', value)}
-              label="4번 첫 번째 항목"
-            />
-            <span>을 좋아하는 학생은</span>
-            <SentenceBlank
-              value={currentAnswers.compareLessRightItem}
-              onChange={(value) => setAnswer('compareLessRightItem', value)}
-              label="4번 두 번째 항목"
-            />
-            <span>을 좋아하는 학생보다</span>
-            <span>적습니다.</span>
+            <span className="interpret-sentence-line">
+              <SentenceBlank
+                value={currentAnswers.compareLessLeftItem}
+                onChange={(value) => setAnswer('compareLessLeftItem', value)}
+                label="4번 첫 번째 항목"
+              />
+              <span>{compareLessLeftParticle} 좋아하는 학생은</span>
+            </span>
+            <span className="interpret-sentence-line">
+              <SentenceBlank
+                value={currentAnswers.compareLessRightItem}
+                onChange={(value) => setAnswer('compareLessRightItem', value)}
+                label="4번 두 번째 항목"
+              />
+              <span>{compareLessRightParticle} 좋아하는 학생보다 적습니다.</span>
+            </span>
           </li>
         </ol>
 
@@ -3491,15 +3612,71 @@ function SelfAssessmentScreen({ answers, onAnswerChange, onBack }) {
 
 function SentenceBlank({ value, onChange, label, short = false, inputMode }) {
   const textValue = typeof value === 'string' ? value : '';
+  const inputRef = useRef(null);
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused || !isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return undefined;
+    let frameId = 0;
+
+    function scheduleKeyboardPanUpdate() {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        updateSoftwareKeyboardPan(inputRef.current);
+      });
+    }
+
+    scheduleKeyboardPanUpdate();
+    window.visualViewport.addEventListener('resize', scheduleKeyboardPanUpdate, { passive: true });
+    window.visualViewport.addEventListener('scroll', scheduleKeyboardPanUpdate, { passive: true });
+
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.visualViewport.removeEventListener('resize', scheduleKeyboardPanUpdate);
+      window.visualViewport.removeEventListener('scroll', scheduleKeyboardPanUpdate);
+      endSoftwareKeyboardPanMode();
+    };
+  }, [isFocused]);
+
+  function scheduleCurrentKeyboardPan(input) {
+    if (!isIosSafari() || typeof window === 'undefined') return;
+    window.requestAnimationFrame(() => updateSoftwareKeyboardPan(input));
+  }
+
+  function handlePointerDown(event) {
+    if (!isIosSafari()) return;
+    event.preventDefault();
+    setIsFocused(true);
+    focusInputWithSoftwareKeyboardPan(event.currentTarget);
+  }
+
+  function handleFocus(event) {
+    setIsFocused(true);
+    if (isIosSafari()) {
+      beginSoftwareKeyboardPanMode();
+      scheduleCurrentKeyboardPan(event.currentTarget);
+    }
+  }
+
+  function handleChange(event) {
+    onChange(event.target.value);
+    scheduleCurrentKeyboardPan(event.currentTarget);
+  }
+
   return (
     <span
       className={`sentence-blank-wrap ${short ? 'is-short' : ''}`}
       style={{ '--sentence-blank-content-width': `${getSentenceBlankWidth(textValue)}px` }}
     >
       <input
+        ref={inputRef}
         className="sentence-blank"
         value={textValue}
-        onChange={(event) => onChange(event.target.value)}
+        onPointerDown={handlePointerDown}
+        onFocus={handleFocus}
+        onBlur={() => setIsFocused(false)}
+        onChange={handleChange}
         aria-label={label}
         data-demo-id={`sentence-blank-${label.replace(/\s+/g, '-')}`}
         inputMode={inputMode}
@@ -3686,7 +3863,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
       if (frameId) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
-        updateGraphLabelKeyboardPan(labelInputRefs.current.get(editingLabelId));
+        updateSoftwareKeyboardPan(labelInputRefs.current.get(editingLabelId));
       });
     }
 
@@ -3698,7 +3875,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
       if (frameId) window.cancelAnimationFrame(frameId);
       window.visualViewport.removeEventListener('resize', scheduleKeyboardPanUpdate);
       window.visualViewport.removeEventListener('scroll', scheduleKeyboardPanUpdate);
-      endGraphLabelKeyboardMode();
+      endSoftwareKeyboardPanMode();
     };
   }, [editingLabelId]);
 
@@ -3766,92 +3943,10 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
     if (label && label.text.trim() === '') onLabelRemove(labelId);
   }
 
-  function getGraphLabelKeyboardRoot() {
-    return typeof document === 'undefined' ? null : document.documentElement;
-  }
-
-  function getCurrentGraphLabelKeyboardPan(root) {
-    if (!root) return 0;
-    const currentPan = Number.parseFloat(root.style.getPropertyValue(GRAPH_LABEL_KEYBOARD_PAN_VAR));
-    return Number.isFinite(currentPan) ? currentPan : 0;
-  }
-
-  function beginGraphLabelKeyboardMode() {
-    if (!isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return false;
-    const root = getGraphLabelKeyboardRoot();
-    if (!root) return false;
-    const appShell = document.querySelector('.app-shell');
-    const frozenHeight = appShell && appShell.getBoundingClientRect().height
-      ? appShell.getBoundingClientRect().height
-      : window.innerHeight;
-    if (frozenHeight) root.style.setProperty('--app-height', `${Math.round(frozenHeight)}px`);
-    root.classList.add(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
-    root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
-    return true;
-  }
-
-  function refreshAppHeightAfterGraphLabelKeyboard() {
-    if (typeof window === 'undefined') return;
-    const root = getGraphLabelKeyboardRoot();
-    const viewportHeight = window.visualViewport && window.visualViewport.height
-      ? window.visualViewport.height
-      : window.innerHeight;
-    if (root && viewportHeight) root.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
-  }
-
-  function endGraphLabelKeyboardMode() {
-    const root = getGraphLabelKeyboardRoot();
-    if (!root) return;
-    root.classList.remove(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
-    root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
-    window.requestAnimationFrame(refreshAppHeightAfterGraphLabelKeyboard);
-  }
-
-  function updateGraphLabelKeyboardPan(input) {
-    if (!input || !isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return;
-    const root = getGraphLabelKeyboardRoot();
-    if (!root || !root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
-
-    const viewport = window.visualViewport;
-    const viewportBottom = (viewport.offsetTop || 0) + viewport.height;
-    const currentPan = getCurrentGraphLabelKeyboardPan(root);
-    const labelRect = input.getBoundingClientRect();
-    const unpannedLabelBottom = labelRect.bottom - currentPan;
-    const nextPan = Math.min(0, viewportBottom - GRAPH_LABEL_KEYBOARD_PAN_GAP - unpannedLabelBottom);
-    const keyboardHeight = Math.max(0, window.innerHeight - viewportBottom);
-    const maxPan = -Math.min(Math.max(keyboardHeight, 0), window.innerHeight * 0.55);
-    const boundedPan = clamp(nextPan, maxPan, 0);
-    root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, `${Math.round(boundedPan)}px`);
-  }
-
-  function canPreventGraphLabelFocusScroll(input) {
-    if (typeof window === 'undefined' || !window.visualViewport) return false;
-    const rect = input.getBoundingClientRect();
-    const viewportHeight = window.visualViewport.height || window.innerHeight;
-    if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return false;
-    if (rect.top < 0 || rect.height <= 0) return false;
-    return rect.bottom <= viewportHeight * LABEL_PREVENT_SCROLL_SAFE_VIEWPORT_RATIO;
-  }
-
-  function focusGraphLabelInput(input) {
-    const keyboardModeStarted = beginGraphLabelKeyboardMode();
-    if (!canPreventGraphLabelFocusScroll(input)) {
-      input.focus();
-      if (keyboardModeStarted) window.requestAnimationFrame(() => updateGraphLabelKeyboardPan(input));
-      return;
-    }
-    try {
-      input.focus({ preventScroll: true });
-    } catch (error) {
-      input.focus();
-    }
-    if (keyboardModeStarted) window.requestAnimationFrame(() => updateGraphLabelKeyboardPan(input));
-  }
-
   function focusLabelById(labelId) {
     const input = labelInputRefs.current.get(labelId);
     if (!input) return false;
-    focusGraphLabelInput(input);
+    focusInputWithSoftwareKeyboardPan(input);
     const caretPosition = input.value.length;
     input.setSelectionRange(caretPosition, caretPosition);
     return true;
@@ -4359,7 +4454,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
                 event.stopPropagation();
               }}
               onBlur={() => {
-                if (isEditing) endGraphLabelKeyboardMode();
+                if (isEditing) endSoftwareKeyboardPanMode();
               }}
               onChange={(event) => {
                 const nextText = event.target.value;
@@ -4444,7 +4539,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
                   }}
                   onClick={(event) => {
                     event.stopPropagation();
-                    endGraphLabelKeyboardMode();
+                    endSoftwareKeyboardPanMode();
                     onLabelRemove(label.id);
                   }}
                 >

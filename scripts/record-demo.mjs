@@ -878,12 +878,19 @@ async function paintGraphSegments(page, type, options = {}) {
 async function addMainGraphLabels(page, type, options = {}) {
   const mainSegments = graphSegments.slice(0, 3);
   for (const segment of mainSegments) {
-    await addGraphLabel(page, type, {
-      percent: (segment.start + segment.end) / 2,
-      radius: type === 'pie' ? pieGraphCircle.radius * 0.42 : undefined,
-      yRatio: 0.46
-    }, `${segment.label}\n(${segment.percent}%)`, { ...options, width: options.width || mainGraphLabelWidth });
+    await addGraphLabel(page, type, getMainGraphLabelLocation(type, segment), `${segment.label}\n(${segment.percent}%)`, { ...options, width: options.width || mainGraphLabelWidth });
   }
+}
+
+function getMainGraphLabelLocation(type, segment) {
+  if (type === 'pie' && segment.label === '과일주스') {
+    return { canvas: { x: 46.5, y: 67 } };
+  }
+  return {
+    percent: (segment.start + segment.end) / 2,
+    radius: type === 'pie' ? pieGraphCircle.radius * 0.42 : undefined,
+    yRatio: 0.46
+  };
 }
 
 async function addNarrowSegmentLabelAndArrow(page, type, options = {}) {
@@ -932,11 +939,7 @@ async function prepareCompletedGraphAnnotations(page) {
     await logStep(`interpret: ${type} graph ready`);
 
     for (const segment of mainSegments) {
-      const point = await getGraphLocationPoints(page, type, {
-        percent: (segment.start + segment.end) / 2,
-        radius: type === 'pie' ? pieGraphCircle.radius * 0.42 : undefined,
-        yRatio: 0.46
-      });
+      const point = await getGraphLocationPoints(page, type, getMainGraphLabelLocation(type, segment));
       labels.push(makePreparedGraphLabel(
         type,
         labels.length,
@@ -1278,7 +1281,7 @@ async function runTableDemo(page) {
 
   await showDemoSpotlight(page, {
     selector: selectorForDemoId('tab-table'),
-    title: '표 그리기 시작',
+    title: '표로 정리하기 시작',
     placement: 'bottom'
   });
   await page.waitForTimeout(tableExplanationMs);
@@ -1498,7 +1501,7 @@ async function runDemo(page) {
   await clickDemoId(page, 'plan-next-title');
 
   await clickDemoId(page, 'tab-table', {
-    title: '3. 표 그리기',
+    title: '3. 표로 정리하기',
     text: '계획에서 정한 항목이 표 머리글로 이어집니다.'
   });
   const counts = ['8', '6', '4', '2', '20'];
