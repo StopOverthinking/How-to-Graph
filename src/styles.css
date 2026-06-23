@@ -31,7 +31,7 @@
   --table-cell-height: 40px;
   --compact-table-cell-height: 32px;
   --app-height: 100vh;
-  --graph-label-keyboard-pan-y: 0px;
+  --ios-keyboard-pan-y: 0px;
   font-family: var(--body-font);
   color: var(--ink);
   background: var(--page);
@@ -84,10 +84,10 @@ button {
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   overflow: hidden;
-  transform: translateY(var(--graph-label-keyboard-pan-y));
+  transform: translateY(var(--ios-keyboard-pan-y));
 }
 
-html.is-graph-label-keyboard-editing .app-shell {
+html.is-ios-keyboard-panning .app-shell {
   will-change: transform;
 }
 

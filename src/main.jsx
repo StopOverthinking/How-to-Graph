@@ -127,10 +127,10 @@ const LABEL_LINE_HEIGHT = 1.18;
 const LABEL_BOX_VERTICAL_PADDING_EM = 0.75;
 const LABEL_BOX_VERTICAL_GUARD_PX = 2;
 const LABEL_SELECTION_INSET_EM = 0.3;
-const LABEL_PREVENT_SCROLL_SAFE_VIEWPORT_RATIO = 0.58;
-const GRAPH_LABEL_KEYBOARD_MODE_CLASS = 'is-graph-label-keyboard-editing';
-const GRAPH_LABEL_KEYBOARD_PAN_VAR = '--graph-label-keyboard-pan-y';
-const GRAPH_LABEL_KEYBOARD_PAN_GAP = 12;
+const IOS_KEYBOARD_SAFE_VIEWPORT_RATIO = 0.58;
+const IOS_KEYBOARD_MODE_CLASS = 'is-ios-keyboard-panning';
+const IOS_KEYBOARD_PAN_VAR = '--ios-keyboard-pan-y';
+const IOS_KEYBOARD_PAN_GAP = 12;
 const DEFAULT_LABEL_FONT_SIZE = 20;
 const MIN_LABEL_FONT_SIZE = 12;
 const MAX_LABEL_FONT_SIZE = 34;
@@ -176,9 +176,9 @@ const SELF_ASSESSMENT_QUESTIONS = [
   { id: 'facts', text: '그래프를 보고 알 수 있는 사실을 올바르게 찾았나요?' }
 ];
 const SELF_ASSESSMENT_OPTIONS = [
+  { id: 'excellent', label: '매우 잘함' },
   { id: 'good', label: '잘함' },
-  { id: 'normal', label: '보통' },
-  { id: 'needsPractice', label: '노력 요함' }
+  { id: 'normal', label: '보통' }
 ];
 const SHARE_GRAPH_TYPE_CODES = { bar: 'b', pie: 'p' };
 const SHARE_GRAPH_TYPES_BY_CODE = { b: 'bar', p: 'pie' };
@@ -1310,11 +1310,11 @@ function App() {
     let frameId = 0;
 
     function applyAppHeight() {
-      if (root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
+      if (root.classList.contains(IOS_KEYBOARD_MODE_CLASS)) return;
       if (frameId) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
-        if (root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
+        if (root.classList.contains(IOS_KEYBOARD_MODE_CLASS)) return;
         const viewportHeight = window.visualViewport && window.visualViewport.height
           ? window.visualViewport.height
           : window.innerHeight;
@@ -1339,8 +1339,8 @@ function App() {
         window.visualViewport.removeEventListener('scroll', applyAppHeight);
       }
       root.style.removeProperty('--app-height');
-      root.style.removeProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR);
-      root.classList.remove(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
+      root.style.removeProperty(IOS_KEYBOARD_PAN_VAR);
+      root.classList.remove(IOS_KEYBOARD_MODE_CLASS);
     };
   }, []);
 
@@ -2120,12 +2120,78 @@ function TableWorkspace({ plan, table, onTableChange }) {
 }
 
 function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = false, compact = false, fitWidth = false }) {
+  const inputRefs = useRef(new Map());
+  const [focusedInputKey, setFocusedInputKey] = useState(null);
   const tableClassName = [
     'manual-table',
     readOnly ? 'is-read-only' : '',
     compact ? 'is-compact' : '',
     fitWidth ? 'is-fit-width' : ''
   ].filter(Boolean).join(' ');
+
+  useEffect(() => {
+    if (readOnly || !focusedInputKey || !supportsIosKeyboardPan()) return undefined;
+    let frameId = 0;
+
+    function scheduleKeyboardPanUpdate() {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        updateIosKeyboardPan(inputRefs.current.get(focusedInputKey));
+      });
+    }
+
+    scheduleKeyboardPanUpdate();
+    window.visualViewport.addEventListener('resize', scheduleKeyboardPanUpdate, { passive: true });
+    window.visualViewport.addEventListener('scroll', scheduleKeyboardPanUpdate, { passive: true });
+
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.visualViewport.removeEventListener('resize', scheduleKeyboardPanUpdate);
+      window.visualViewport.removeEventListener('scroll', scheduleKeyboardPanUpdate);
+      window.requestAnimationFrame(() => {
+        const activeElement = document.activeElement;
+        if (activeElement instanceof Element && activeElement.closest('.manual-table')) return;
+        endIosKeyboardPanMode();
+      });
+    };
+  }, [focusedInputKey, readOnly]);
+
+  function handleEditableInputPointerDown(event, inputKey) {
+    if (!supportsIosKeyboardPan()) return;
+    event.preventDefault();
+    const input = event.currentTarget;
+    setFocusedInputKey(inputKey);
+    focusIosKeyboardInput(input);
+    window.requestAnimationFrame(() => {
+      try {
+        const caretPosition = input.value.length;
+        input.setSelectionRange(caretPosition, caretPosition);
+      } catch (error) {
+        // Number-like cells may not expose text selection in every browser.
+      }
+    });
+  }
+
+  function handleEditableInputFocus(event, inputKey) {
+    setFocusedInputKey(inputKey);
+    if (!supportsIosKeyboardPan()) return;
+    beginIosKeyboardPanMode();
+    window.requestAnimationFrame(() => updateIosKeyboardPan(event.currentTarget));
+  }
+
+  function handleEditableInputBlur() {
+    if (!supportsIosKeyboardPan()) {
+      setFocusedInputKey(null);
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof Element && activeElement.closest('.manual-table')) return;
+      setFocusedInputKey(null);
+      endIosKeyboardPanMode();
+    });
+  }
 
   return (
     <div className="manual-table-wrap">
@@ -2154,11 +2220,20 @@ function ManualTable({ headerRow, rows, tableWidth, onCellChange, readOnly = fal
                       <span className="manual-table-cell-text" data-demo-id={`manual-cell-text-${rowIndex}-${cellIndex}`}><span>{cell}</span></span>
                     ) : (
                       <input
+                        ref={(node) => {
+                          const inputKey = `${rowIndex}:${cellIndex}`;
+                          if (node) inputRefs.current.set(inputKey, node);
+                          else inputRefs.current.delete(inputKey);
+                        }}
                         value={cell}
                         onChange={cellReadOnly ? undefined : (event) => onCellChange(rowIndex, cellIndex, event.target.value)}
+                        onPointerDown={(event) => handleEditableInputPointerDown(event, `${rowIndex}:${cellIndex}`)}
+                        onFocus={(event) => handleEditableInputFocus(event, `${rowIndex}:${cellIndex}`)}
+                        onBlur={handleEditableInputBlur}
                         readOnly={cellReadOnly}
                         aria-label={`${rowIndex + 1}행 ${cellIndex + 1}열`}
                         data-demo-id={`manual-cell-${rowIndex}-${cellIndex}`}
+                        autoComplete="off"
                       />
                     )}
                   </td>
@@ -3088,86 +3163,91 @@ function isIosSafari() {
   return isAppleMobile && /WebKit/.test(userAgent) && /Safari/.test(userAgent) && !isOtherIosBrowser;
 }
 
-function getSoftwareKeyboardPanRoot() {
+function supportsIosKeyboardPan() {
+  return isIosSafari() && typeof window !== 'undefined' && !!window.visualViewport;
+}
+
+function getIosKeyboardRoot() {
   return typeof document === 'undefined' ? null : document.documentElement;
 }
 
-function getCurrentSoftwareKeyboardPan(root) {
+function getCurrentIosKeyboardPan(root) {
   if (!root) return 0;
-  const currentPan = Number.parseFloat(root.style.getPropertyValue(GRAPH_LABEL_KEYBOARD_PAN_VAR));
+  const currentPan = Number.parseFloat(root.style.getPropertyValue(IOS_KEYBOARD_PAN_VAR));
   return Number.isFinite(currentPan) ? currentPan : 0;
 }
 
-function beginSoftwareKeyboardPanMode() {
-  if (!isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return false;
-  const root = getSoftwareKeyboardPanRoot();
+function beginIosKeyboardPanMode() {
+  if (!supportsIosKeyboardPan()) return false;
+  const root = getIosKeyboardRoot();
   if (!root) return false;
   const appShell = document.querySelector('.app-shell');
   const frozenHeight = appShell && appShell.getBoundingClientRect().height
     ? appShell.getBoundingClientRect().height
     : window.innerHeight;
   if (frozenHeight) root.style.setProperty('--app-height', `${Math.round(frozenHeight)}px`);
-  root.classList.add(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
-  root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
+  root.classList.add(IOS_KEYBOARD_MODE_CLASS);
+  root.style.setProperty(IOS_KEYBOARD_PAN_VAR, '0px');
   return true;
 }
 
-function refreshAppHeightAfterSoftwareKeyboardPan() {
+function refreshAppHeightAfterIosKeyboard() {
   if (typeof window === 'undefined') return;
-  const root = getSoftwareKeyboardPanRoot();
+  const root = getIosKeyboardRoot();
   const viewportHeight = window.visualViewport && window.visualViewport.height
     ? window.visualViewport.height
     : window.innerHeight;
   if (root && viewportHeight) root.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
 }
 
-function endSoftwareKeyboardPanMode() {
-  const root = getSoftwareKeyboardPanRoot();
+function endIosKeyboardPanMode() {
+  const root = getIosKeyboardRoot();
   if (!root) return;
-  root.classList.remove(GRAPH_LABEL_KEYBOARD_MODE_CLASS);
-  root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, '0px');
-  if (typeof window !== 'undefined') window.requestAnimationFrame(refreshAppHeightAfterSoftwareKeyboardPan);
+  root.classList.remove(IOS_KEYBOARD_MODE_CLASS);
+  root.style.setProperty(IOS_KEYBOARD_PAN_VAR, '0px');
+  if (typeof window !== 'undefined') window.requestAnimationFrame(refreshAppHeightAfterIosKeyboard);
 }
 
-function updateSoftwareKeyboardPan(input) {
-  if (!input || !isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return;
-  const root = getSoftwareKeyboardPanRoot();
-  if (!root || !root.classList.contains(GRAPH_LABEL_KEYBOARD_MODE_CLASS)) return;
+function updateIosKeyboardPan(input) {
+  if (!input || !supportsIosKeyboardPan()) return;
+  const root = getIosKeyboardRoot();
+  if (!root || !root.classList.contains(IOS_KEYBOARD_MODE_CLASS)) return;
 
   const viewport = window.visualViewport;
   const viewportBottom = (viewport.offsetTop || 0) + viewport.height;
-  const currentPan = getCurrentSoftwareKeyboardPan(root);
+  const currentPan = getCurrentIosKeyboardPan(root);
   const inputRect = input.getBoundingClientRect();
   const unpannedInputBottom = inputRect.bottom - currentPan;
-  const nextPan = Math.min(0, viewportBottom - GRAPH_LABEL_KEYBOARD_PAN_GAP - unpannedInputBottom);
+  const nextPan = Math.min(0, viewportBottom - IOS_KEYBOARD_PAN_GAP - unpannedInputBottom);
   const keyboardHeight = Math.max(0, window.innerHeight - viewportBottom);
   const maxPan = -Math.min(Math.max(keyboardHeight, 0), window.innerHeight * 0.55);
   const boundedPan = clamp(nextPan, maxPan, 0);
-  root.style.setProperty(GRAPH_LABEL_KEYBOARD_PAN_VAR, `${Math.round(boundedPan)}px`);
+  root.style.setProperty(IOS_KEYBOARD_PAN_VAR, `${Math.round(boundedPan)}px`);
 }
 
-function canPreventSoftwareKeyboardFocusScroll(input) {
+function canPreventIosKeyboardFocusScroll(input) {
   if (typeof window === 'undefined' || !window.visualViewport) return false;
   const rect = input.getBoundingClientRect();
   const viewportHeight = window.visualViewport.height || window.innerHeight;
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return false;
   if (rect.top < 0 || rect.height <= 0) return false;
-  return rect.bottom <= viewportHeight * LABEL_PREVENT_SCROLL_SAFE_VIEWPORT_RATIO;
+  return rect.bottom <= viewportHeight * IOS_KEYBOARD_SAFE_VIEWPORT_RATIO;
 }
 
-function focusInputWithSoftwareKeyboardPan(input) {
-  const keyboardModeStarted = beginSoftwareKeyboardPanMode();
-  if (!canPreventSoftwareKeyboardFocusScroll(input)) {
+function focusIosKeyboardInput(input) {
+  const keyboardModeStarted = beginIosKeyboardPanMode();
+  if (!canPreventIosKeyboardFocusScroll(input)) {
     input.focus();
-    if (keyboardModeStarted) window.requestAnimationFrame(() => updateSoftwareKeyboardPan(input));
-    return;
+    if (keyboardModeStarted) window.requestAnimationFrame(() => updateIosKeyboardPan(input));
+    return keyboardModeStarted;
   }
   try {
     input.focus({ preventScroll: true });
   } catch (error) {
     input.focus();
   }
-  if (keyboardModeStarted) window.requestAnimationFrame(() => updateSoftwareKeyboardPan(input));
+  if (keyboardModeStarted) window.requestAnimationFrame(() => updateIosKeyboardPan(input));
+  return keyboardModeStarted;
 }
 
 function GraphWorkspace({ plan, table, graph, onChange, onOpenReport }) {
@@ -3616,14 +3696,14 @@ function SentenceBlank({ value, onChange, label, short = false, inputMode }) {
   const [isFocused, setIsFocused] = useState(false);
 
   useEffect(() => {
-    if (!isFocused || !isIosSafari() || typeof window === 'undefined' || !window.visualViewport) return undefined;
+    if (!isFocused || !supportsIosKeyboardPan()) return undefined;
     let frameId = 0;
 
     function scheduleKeyboardPanUpdate() {
       if (frameId) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
-        updateSoftwareKeyboardPan(inputRef.current);
+        updateIosKeyboardPan(inputRef.current);
       });
     }
 
@@ -3635,26 +3715,26 @@ function SentenceBlank({ value, onChange, label, short = false, inputMode }) {
       if (frameId) window.cancelAnimationFrame(frameId);
       window.visualViewport.removeEventListener('resize', scheduleKeyboardPanUpdate);
       window.visualViewport.removeEventListener('scroll', scheduleKeyboardPanUpdate);
-      endSoftwareKeyboardPanMode();
+      endIosKeyboardPanMode();
     };
   }, [isFocused]);
 
   function scheduleCurrentKeyboardPan(input) {
-    if (!isIosSafari() || typeof window === 'undefined') return;
-    window.requestAnimationFrame(() => updateSoftwareKeyboardPan(input));
+    if (!supportsIosKeyboardPan()) return;
+    window.requestAnimationFrame(() => updateIosKeyboardPan(input));
   }
 
   function handlePointerDown(event) {
-    if (!isIosSafari()) return;
+    if (!supportsIosKeyboardPan()) return;
     event.preventDefault();
     setIsFocused(true);
-    focusInputWithSoftwareKeyboardPan(event.currentTarget);
+    focusIosKeyboardInput(event.currentTarget);
   }
 
   function handleFocus(event) {
     setIsFocused(true);
-    if (isIosSafari()) {
-      beginSoftwareKeyboardPanMode();
+    if (supportsIosKeyboardPan()) {
+      beginIosKeyboardPanMode();
       scheduleCurrentKeyboardPan(event.currentTarget);
     }
   }
@@ -3856,14 +3936,14 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
   }, [editingLabelId]);
 
   useEffect(() => {
-    if (!editingLabelId || !isIosSafari() || !window.visualViewport) return undefined;
+    if (!editingLabelId || !supportsIosKeyboardPan()) return undefined;
     let frameId = 0;
 
     function scheduleKeyboardPanUpdate() {
       if (frameId) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
-        updateSoftwareKeyboardPan(labelInputRefs.current.get(editingLabelId));
+        updateIosKeyboardPan(labelInputRefs.current.get(editingLabelId));
       });
     }
 
@@ -3875,7 +3955,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
       if (frameId) window.cancelAnimationFrame(frameId);
       window.visualViewport.removeEventListener('resize', scheduleKeyboardPanUpdate);
       window.visualViewport.removeEventListener('scroll', scheduleKeyboardPanUpdate);
-      endSoftwareKeyboardPanMode();
+      endIosKeyboardPanMode();
     };
   }, [editingLabelId]);
 
@@ -3946,7 +4026,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
   function focusLabelById(labelId) {
     const input = labelInputRefs.current.get(labelId);
     if (!input) return false;
-    focusInputWithSoftwareKeyboardPan(input);
+    focusIosKeyboardInput(input);
     const caretPosition = input.value.length;
     input.setSelectionRange(caretPosition, caretPosition);
     return true;
@@ -4454,7 +4534,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
                 event.stopPropagation();
               }}
               onBlur={() => {
-                if (isEditing) endSoftwareKeyboardPanMode();
+                if (isEditing) endIosKeyboardPanMode();
               }}
               onChange={(event) => {
                 const nextText = event.target.value;
@@ -4539,7 +4619,7 @@ const GraphCanvas = React.forwardRef(function GraphCanvas({ graph, segments, onA
                   }}
                   onClick={(event) => {
                     event.stopPropagation();
-                    endSoftwareKeyboardPanMode();
+                    endIosKeyboardPanMode();
                     onLabelRemove(label.id);
                   }}
                 >
